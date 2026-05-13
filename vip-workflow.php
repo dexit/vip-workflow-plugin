@@ -83,3 +83,4 @@ require_once VIP_WORKFLOW_ROOT . '/modules/custom-status/custom-status.php';
 require_once VIP_WORKFLOW_ROOT . '/modules/editorial-metadata/editorial-metadata.php';
 require_once VIP_WORKFLOW_ROOT . '/modules/notifications/notifications.php';
 require_once VIP_WORKFLOW_ROOT . '/modules/preview/preview.php';
+require_once VIP_WORKFLOW_ROOT . '/modules/api-workflow/api-workflow.php';
