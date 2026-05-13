@@ -97,15 +97,23 @@ class APIWorkflow {
 	public static function execute_workflow( $workflow, $config, $request ) {
 		$data = $request->get_params();
 		$context = [
-			'request' => $data,
-			'headers' => $request->get_headers(),
+			'request'  => $data,
+			'headers'  => $request->get_headers(),
 			'workflow' => $workflow,
+			'steps'    => [],
 		];
 
 		$results = [];
 		if ( isset( $config['steps'] ) && is_array( $config['steps'] ) ) {
-			foreach ( $config['steps'] as $step ) {
-				$results[] = self::execute_step( $step, $context );
+			foreach ( $config['steps'] as $index => $step ) {
+				$result = self::execute_step( $step, $context );
+				$results[] = $result;
+
+				// Store result in context by index and optionally by name
+				$context['steps'][ $index ] = $result;
+				if ( ! empty( $step['name'] ) ) {
+					$context['steps'][ $step['name'] ] = $result;
+				}
 			}
 		}
 
@@ -126,6 +134,8 @@ class APIWorkflow {
 				return self::send_webhook( $step, $context );
 			case 'ingest':
 				return self::ingest_data( $step, $context );
+			case 'email':
+				return self::send_email( $step, $context );
 		}
 		return null;
 	}
@@ -133,21 +143,26 @@ class APIWorkflow {
 	private static function send_webhook( $step, $context ) {
 		$url = self::parse_template( $step['url'] ?? '', $context );
 		$body = self::parse_template( $step['body'] ?? '', $context );
+		$headers = self::parse_template( $step['headers'] ?? [], $context );
 
 		$response = wp_remote_post( $url, [
 			'body'    => $body,
-			'headers' => $step['headers'] ?? [],
+			'headers' => $headers,
 		] );
 
-		return is_wp_error( $response ) ? $response->get_error_message() : wp_remote_retrieve_body( $response );
+		return is_wp_error( $response ) ? [ 'error' => $response->get_error_message() ] : [
+			'status' => wp_remote_retrieve_response_code( $response ),
+			'body'   => wp_remote_retrieve_body( $response ),
+		];
 	}
 
 	private static function ingest_data( $step, $context ) {
 		$post_data = [
-			'post_type'   => $step['post_type'] ?? 'post',
-			'post_status' => $step['post_status'] ?? 'draft',
-			'post_title'  => self::parse_template( $step['post_title'] ?? '', $context ),
+			'post_type'    => $step['post_type'] ?? 'post',
+			'post_status'  => $step['post_status'] ?? 'draft',
+			'post_title'   => self::parse_template( $step['post_title'] ?? '', $context ),
 			'post_content' => self::parse_template( $step['post_content'] ?? '', $context ),
+			'post_author'  => self::parse_template( $step['post_author'] ?? get_current_user_id(), $context ),
 		];
 
 		$post_id = wp_insert_post( $post_data );
@@ -158,13 +173,32 @@ class APIWorkflow {
 			}
 		}
 
-		return $post_id;
+		return [ 'post_id' => $post_id ];
 	}
 
-	private static function parse_template( $template, $context ) {
-		if ( ! is_string( $template ) ) {
-			return $template;
+	private static function send_email( $step, $context ) {
+		$to = self::parse_template( $step['to'] ?? '', $context );
+		$subject = self::parse_template( $step['subject'] ?? '', $context );
+		$message = self::parse_template( $step['message'] ?? '', $context );
+		$headers = self::parse_template( $step['headers'] ?? '', $context );
+
+		$success = wp_mail( $to, $subject, $message, $headers );
+
+		return [ 'success' => $success ];
+	}
+
+	private static function parse_template( $data, $context ) {
+		if ( is_array( $data ) ) {
+			foreach ( $data as $key => $value ) {
+				$data[ $key ] = self::parse_template( $value, $context );
+			}
+			return $data;
 		}
+
+		if ( ! is_string( $data ) ) {
+			return $data;
+		}
+
 		return preg_replace_callback( '/{{(.*?)}}/', function ( $matches ) use ( $context ) {
 			$path = explode( '.', trim( $matches[1] ) );
 			$value = $context;
@@ -178,7 +212,7 @@ class APIWorkflow {
 				}
 			}
 			return is_scalar( $value ) ? $value : json_encode( $value );
-		}, $template );
+		}, $data );
 	}
 }
 

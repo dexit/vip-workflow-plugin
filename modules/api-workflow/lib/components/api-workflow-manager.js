@@ -10,7 +10,8 @@ import {
     FlexItem,
     __experimentalHeading as Heading,
     Spinner,
-    Modal
+    Modal,
+    ExternalLink
 } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import apiFetch from '@wordpress/api-fetch';
@@ -79,14 +80,13 @@ export default function APIWorkflowManager() {
 
     const handleSave = async () => {
         try {
-            const method = currentWorkflow.id ? 'POST' : 'POST';
             const path = currentWorkflow.id
                 ? `/vip-workflow/v1/api-workflow/${currentWorkflow.id}`
                 : '/vip-workflow/v1/api-workflow';
 
             await apiFetch( {
                 path,
-                method,
+                method: 'POST',
                 data: currentWorkflow
             } );
 
@@ -99,16 +99,22 @@ export default function APIWorkflowManager() {
     };
 
     const addStep = ( type ) => {
-        const newStep = { type, id: Date.now() };
+        const newStep = { type, id: Date.now(), name: '' };
         if ( type === 'webhook' ) {
             newStep.url = '';
             newStep.body = '';
+            newStep.headers = '{}';
         } else if ( type === 'ingest' ) {
             newStep.post_type = 'post';
             newStep.post_title = '';
             newStep.post_content = '';
+            newStep.meta = '{}';
         } else if ( type === 'php_action' ) {
             newStep.callback = '';
+        } else if ( type === 'email' ) {
+            newStep.to = '';
+            newStep.subject = '';
+            newStep.message = '';
         }
 
         setCurrentWorkflow( {
@@ -118,6 +124,15 @@ export default function APIWorkflowManager() {
                 steps: [ ...currentWorkflow.config.steps, newStep ]
             }
         } );
+    };
+
+    const updateStep = ( index, data ) => {
+        const steps = [ ...currentWorkflow.config.steps ];
+        steps[ index ] = { ...steps[ index ], ...data };
+        setCurrentWorkflow({
+            ...currentWorkflow,
+            config: { ...currentWorkflow.config, steps }
+        });
     };
 
     if ( isLoading ) {
@@ -159,7 +174,7 @@ export default function APIWorkflowManager() {
                 <Modal
                     title={ currentWorkflow.id ? __( 'Edit Workflow', 'vip-workflow' ) : __( 'Create Workflow', 'vip-workflow' ) }
                     onRequestClose={ () => setIsEditing( false ) }
-                    style={{ width: '80%', maxWidth: '800px' }}
+                    style={{ width: '80%', maxWidth: '900px' }}
                 >
                     <div style={{ padding: '20px' }}>
                         <TextControl
@@ -215,9 +230,13 @@ export default function APIWorkflowManager() {
                         />
 
                         <Heading level={ 3 }>{ __( 'Workflow Steps', 'vip-workflow' ) }</Heading>
+                        <p className="description">
+                            { __( 'Available tags:', 'vip-workflow' ) } <code>{'{{request.body.key}}'}</code>, <code>{'{{headers.x-header}}'}</code>, <code>{'{{steps.step_name.result_key}}'}</code>
+                        </p>
+
                         { currentWorkflow.config.steps.map( ( step, index ) => (
-                            <Panel key={ step.id } style={{ border: '1px solid #ccc', marginBottom: '10px', padding: '10px' }}>
-                                <Flex justify="space-between" align="center">
+                            <Panel key={ step.id } style={{ border: '1px solid #ccc', marginBottom: '20px', padding: '15px' }}>
+                                <Flex justify="space-between" align="center" style={{ marginBottom: '15px' }}>
                                     <Heading level={ 4 }>{ step.type.toUpperCase() }</Heading>
                                     <Button isDestructive onClick={ () => {
                                         const steps = [ ...currentWorkflow.config.steps ];
@@ -228,26 +247,28 @@ export default function APIWorkflowManager() {
                                     </Button>
                                 </Flex>
 
+                                <TextControl
+                                    label={ __( 'Step Name (optional, for referencing in later steps)', 'vip-workflow' ) }
+                                    value={ step.name }
+                                    onChange={ ( val ) => updateStep( index, { name: val } ) }
+                                />
+
                                 { step.type === 'webhook' && (
                                     <>
                                         <TextControl
                                             label={ __( 'Webhook URL', 'vip-workflow' ) }
                                             value={ step.url }
-                                            onChange={ ( val ) => {
-                                                const steps = [ ...currentWorkflow.config.steps ];
-                                                steps[ index ].url = val;
-                                                setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
-                                            }}
-                                            help={ __( 'Use {{request.param}} for template tags', 'vip-workflow' ) }
+                                            onChange={ ( val ) => updateStep( index, { url: val } ) }
                                         />
                                         <TextControl
-                                            label={ __( 'Body (JSON)', 'vip-workflow' ) }
+                                            label={ __( 'Headers (JSON string)', 'vip-workflow' ) }
+                                            value={ step.headers }
+                                            onChange={ ( val ) => updateStep( index, { headers: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Body (JSON string)', 'vip-workflow' ) }
                                             value={ step.body }
-                                            onChange={ ( val ) => {
-                                                const steps = [ ...currentWorkflow.config.steps ];
-                                                steps[ index ].body = val;
-                                                setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
-                                            }}
+                                            onChange={ ( val ) => updateStep( index, { body: val } ) }
                                         />
                                     </>
                                 )}
@@ -261,20 +282,22 @@ export default function APIWorkflowManager() {
                                                 { label: 'Post', value: 'post' },
                                                 { label: 'Page', value: 'page' }
                                             ]}
-                                            onChange={ ( val ) => {
-                                                const steps = [ ...currentWorkflow.config.steps ];
-                                                steps[ index ].post_type = val;
-                                                setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
-                                            }}
+                                            onChange={ ( val ) => updateStep( index, { post_type: val } ) }
                                         />
                                         <TextControl
                                             label={ __( 'Title Template', 'vip-workflow' ) }
                                             value={ step.post_title }
-                                            onChange={ ( val ) => {
-                                                const steps = [ ...currentWorkflow.config.steps ];
-                                                steps[ index ].post_title = val;
-                                                setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
-                                            }}
+                                            onChange={ ( val ) => updateStep( index, { post_title: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Content Template', 'vip-workflow' ) }
+                                            value={ step.post_content }
+                                            onChange={ ( val ) => updateStep( index, { post_content: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Meta Data (JSON key:value pairs)', 'vip-workflow' ) }
+                                            value={ step.meta }
+                                            onChange={ ( val ) => updateStep( index, { meta: val } ) }
                                         />
                                     </>
                                 )}
@@ -283,12 +306,29 @@ export default function APIWorkflowManager() {
                                     <TextControl
                                         label={ __( 'PHP Callback Function', 'vip-workflow' ) }
                                         value={ step.callback }
-                                        onChange={ ( val ) => {
-                                            const steps = [ ...currentWorkflow.config.steps ];
-                                            steps[ index ].callback = val;
-                                            setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
-                                        }}
+                                        onChange={ ( val ) => updateStep( index, { callback: val } ) }
+                                        help={ __( 'Function signature: function($context) { ... }', 'vip-workflow' ) }
                                     />
+                                )}
+
+                                { step.type === 'email' && (
+                                    <>
+                                        <TextControl
+                                            label={ __( 'To', 'vip-workflow' ) }
+                                            value={ step.to }
+                                            onChange={ ( val ) => updateStep( index, { to: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Subject', 'vip-workflow' ) }
+                                            value={ step.subject }
+                                            onChange={ ( val ) => updateStep( index, { subject: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Message', 'vip-workflow' ) }
+                                            value={ step.message }
+                                            onChange={ ( val ) => updateStep( index, { message: val } ) }
+                                        />
+                                    </>
                                 )}
                             </Panel>
                         ))}
@@ -297,6 +337,7 @@ export default function APIWorkflowManager() {
                             <Button variant="secondary" onClick={ () => addStep('webhook') }>{ __( 'Add Webhook', 'vip-workflow' ) }</Button>
                             <Button variant="secondary" onClick={ () => addStep('ingest') }>{ __( 'Add CPT Ingest', 'vip-workflow' ) }</Button>
                             <Button variant="secondary" onClick={ () => addStep('php_action') }>{ __( 'Add PHP Action', 'vip-workflow' ) }</Button>
+                            <Button variant="secondary" onClick={ () => addStep('email') }>{ __( 'Add Email', 'vip-workflow' ) }</Button>
                         </Flex>
 
                         <Flex justify="flex-end" style={{ marginTop: '40px' }}>
