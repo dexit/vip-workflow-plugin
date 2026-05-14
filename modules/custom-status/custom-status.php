@@ -183,7 +183,7 @@ class CustomStatus {
 	 * @access private
 	 */
 	public static function add_admin_menu(): void {
-		$menu_title = __( 'VIP Workflow', 'vip-workflow' );
+		$menu_title = __( 'API Workflow Builder', 'vip-workflow' );
 
 		add_menu_page( $menu_title, $menu_title, 'manage_options', self::SETTINGS_SLUG, [ __CLASS__, 'render_settings_view' ] );
 	}
@@ -212,6 +212,7 @@ class CustomStatus {
 				'editorial_metadatas' => EditorialMetadata::get_editorial_metadata_terms(),
 				'url_edit_status'     => CustomStatusEndpoint::get_crud_url(),
 				'url_reorder_status'  => CustomStatusEndpoint::get_reorder_url(),
+				'api_config'          => get_option( 'vw_api_endpoint_config', [ 'path' => '/my-workflow-api', 'method' => 'POST', 'api_key' => '' ] ),
 			] );
 		}
 
