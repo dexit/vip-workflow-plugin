@@ -6,15 +6,19 @@ import {
     PanelRow,
     TextControl,
     SelectControl,
+    ToggleControl,
     Flex,
     FlexItem,
     __experimentalHeading as Heading,
     Spinner,
-    Modal,
-    ExternalLink
+    Modal
 } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import apiFetch from '@wordpress/api-fetch';
+import CodeMirror from '@uiw/react-codemirror';
+import { php } from '@codemirror/lang-php';
+import { json } from '@codemirror/lang-json';
+import { autocompletion } from '@codemirror/autocomplete';
 import ErrorNotice from '../../../shared/js/components/error-notice';
 import SuccessNotice from '../../../shared/js/components/success-notice';
 
@@ -33,8 +37,8 @@ export default function APIWorkflowManager() {
     const fetchWorkflows = async () => {
         setIsLoading( true );
         try {
-            const data = await apiFetch( { path: '/vip-workflow/v1/api-workflow' } );
-            setWorkflows( data );
+            const data = await apiFetch( { path: '/vip-workflow/v1/api-config' } );
+            setWorkflows( Array.isArray(data) ? data : [data] );
         } catch ( err ) {
             setError( err.message );
         } finally {
@@ -44,15 +48,17 @@ export default function APIWorkflowManager() {
 
     const handleCreate = () => {
         setCurrentWorkflow( {
-            title: 'New Workflow',
-            config: {
-                endpoint: {
-                    path: '/my-custom-endpoint',
-                    method: 'POST',
-                    api_key: ''
-                },
-                steps: []
-            }
+            id: 'wf_' + Date.now(),
+            name: 'New Workflow',
+            path: '/my-custom-endpoint',
+            method: 'POST',
+            api_key: '',
+            rate_limit: {
+                enabled: false,
+                limit: 60,
+                window: 60
+            },
+            steps: []
         } );
         setIsEditing( true );
     };
@@ -66,10 +72,12 @@ export default function APIWorkflowManager() {
         if ( ! window.confirm( __( 'Are you sure you want to delete this workflow?', 'vip-workflow' ) ) ) {
             return;
         }
+        const updatedWorkflows = workflows.filter( w => w.id !== id );
         try {
             await apiFetch( {
-                path: `/vip-workflow/v1/api-workflow/${id}`,
-                method: 'DELETE'
+                path: '/vip-workflow/v1/api-config',
+                method: 'POST',
+                data: updatedWorkflows
             } );
             setSuccess( __( 'Workflow deleted', 'vip-workflow' ) );
             fetchWorkflows();
@@ -79,15 +87,20 @@ export default function APIWorkflowManager() {
     };
 
     const handleSave = async () => {
-        try {
-            const path = currentWorkflow.id
-                ? `/vip-workflow/v1/api-workflow/${currentWorkflow.id}`
-                : '/vip-workflow/v1/api-workflow';
+        let updatedWorkflows;
+        const index = workflows.findIndex( w => w.id === currentWorkflow.id );
+        if ( index !== -1 ) {
+            updatedWorkflows = [ ...workflows ];
+            updatedWorkflows[ index ] = currentWorkflow;
+        } else {
+            updatedWorkflows = [ ...workflows, currentWorkflow ];
+        }
 
+        try {
             await apiFetch( {
-                path,
+                path: '/vip-workflow/v1/api-config',
                 method: 'POST',
-                data: currentWorkflow
+                data: updatedWorkflows
             } );
 
             setSuccess( __( 'Workflow saved', 'vip-workflow' ) );
@@ -99,18 +112,19 @@ export default function APIWorkflowManager() {
     };
 
     const addStep = ( type ) => {
-        const newStep = { type, id: Date.now(), name: '' };
+        const newStep = { type, id: 'step_' + Date.now(), name: '', async: false };
         if ( type === 'webhook' ) {
             newStep.url = '';
-            newStep.body = '';
+            newStep.method = 'POST';
             newStep.headers = '{}';
+            newStep.body = '{}';
         } else if ( type === 'ingest' ) {
             newStep.post_type = 'post';
             newStep.post_title = '';
             newStep.post_content = '';
             newStep.meta = '{}';
         } else if ( type === 'php_action' ) {
-            newStep.callback = '';
+            newStep.code = '<?php\n\nreturn "Hello World";';
         } else if ( type === 'email' ) {
             newStep.to = '';
             newStep.subject = '';
@@ -119,21 +133,44 @@ export default function APIWorkflowManager() {
 
         setCurrentWorkflow( {
             ...currentWorkflow,
-            config: {
-                ...currentWorkflow.config,
-                steps: [ ...currentWorkflow.config.steps, newStep ]
-            }
+            steps: [ ...currentWorkflow.steps, newStep ]
         } );
     };
 
     const updateStep = ( index, data ) => {
-        const steps = [ ...currentWorkflow.config.steps ];
+        const steps = [ ...currentWorkflow.steps ];
         steps[ index ] = { ...steps[ index ], ...data };
         setCurrentWorkflow({
             ...currentWorkflow,
-            config: { ...currentWorkflow.config, steps }
+            steps
         });
     };
+
+    const getCompletions = ( context ) => {
+        const word = context.matchBefore(/\{\{\s*[\w.]*/);
+        if ( !word ) return null;
+
+        const options = [
+            { label: 'request.params', type: 'variable' },
+            { label: 'request.headers', type: 'variable' },
+            { label: 'request.body', type: 'variable' },
+            { label: 'workflow.id', type: 'constant' },
+            { label: 'workflow.name', type: 'constant' },
+        ];
+
+        currentWorkflow.steps.forEach( step => {
+            if ( step.name ) {
+                options.push( { label: `steps.${step.name}.result`, type: 'variable' } );
+            }
+        } );
+
+        return {
+            from: word.from + 2, // Start after {{
+            options: options.map( opt => ({ ...opt, label: opt.label.trim() }) )
+        };
+    };
+
+    const completionExtension = autocompletion({ override: [getCompletions] });
 
     if ( isLoading ) {
         return <Spinner />;
@@ -152,10 +189,10 @@ export default function APIWorkflowManager() {
 
             <Panel>
                 { workflows.map( ( workflow ) => (
-                    <PanelBody key={ workflow.id } title={ workflow.title } initialOpen={ false }>
+                    <PanelBody key={ workflow.id } title={ workflow.name } initialOpen={ false }>
                         <PanelRow>
                             <div>
-                                <strong>{ __( 'Endpoint:', 'vip-workflow' ) }</strong> <code>/wp-json/vw-api/v1{ workflow.config?.endpoint?.path }</code>
+                                <strong>{ __( 'Endpoint:', 'vip-workflow' ) }</strong> <code>/wp-json/vw-api/v1{ workflow.path }</code>
                             </div>
                             <Flex>
                                 <Button variant="secondary" onClick={ () => handleEdit( workflow ) }>
@@ -174,13 +211,13 @@ export default function APIWorkflowManager() {
                 <Modal
                     title={ currentWorkflow.id ? __( 'Edit Workflow', 'vip-workflow' ) : __( 'Create Workflow', 'vip-workflow' ) }
                     onRequestClose={ () => setIsEditing( false ) }
-                    style={{ width: '80%', maxWidth: '900px' }}
+                    style={{ width: '90%', maxWidth: '1000px' }}
                 >
                     <div style={{ padding: '20px' }}>
                         <TextControl
-                            label={ __( 'Workflow Title', 'vip-workflow' ) }
-                            value={ currentWorkflow.title }
-                            onChange={ ( val ) => setCurrentWorkflow( { ...currentWorkflow, title: val } ) }
+                            label={ __( 'Workflow Name', 'vip-workflow' ) }
+                            value={ currentWorkflow.name }
+                            onChange={ ( val ) => setCurrentWorkflow( { ...currentWorkflow, name: val } ) }
                         />
 
                         <Heading level={ 3 }>{ __( 'Endpoint Configuration', 'vip-workflow' ) }</Heading>
@@ -188,67 +225,90 @@ export default function APIWorkflowManager() {
                             <FlexItem isBlock>
                                 <TextControl
                                     label={ __( 'Path', 'vip-workflow' ) }
-                                    value={ currentWorkflow.config.endpoint.path }
-                                    onChange={ ( val ) => setCurrentWorkflow( {
-                                        ...currentWorkflow,
-                                        config: {
-                                            ...currentWorkflow.config,
-                                            endpoint: { ...currentWorkflow.config.endpoint, path: val }
-                                        }
-                                    } ) }
+                                    value={ currentWorkflow.path }
+                                    onChange={ ( val ) => setCurrentWorkflow( { ...currentWorkflow, path: val } ) }
                                 />
                             </FlexItem>
                             <FlexItem>
                                 <SelectControl
                                     label={ __( 'Method', 'vip-workflow' ) }
-                                    value={ currentWorkflow.config.endpoint.method }
+                                    value={ currentWorkflow.method }
                                     options={[
                                         { label: 'POST', value: 'POST' },
                                         { label: 'GET', value: 'GET' },
                                         { label: 'PUT', value: 'PUT' }
                                     ]}
-                                    onChange={ ( val ) => setCurrentWorkflow( {
-                                        ...currentWorkflow,
-                                        config: {
-                                            ...currentWorkflow.config,
-                                            endpoint: { ...currentWorkflow.config.endpoint, method: val }
-                                        }
-                                    } ) }
+                                    onChange={ ( val ) => setCurrentWorkflow( { ...currentWorkflow, method: val } ) }
                                 />
                             </FlexItem>
                         </Flex>
                         <TextControl
                             label={ __( 'API Key (X-VW-API-KEY Header)', 'vip-workflow' ) }
-                            value={ currentWorkflow.config.endpoint.api_key }
-                            onChange={ ( val ) => setCurrentWorkflow( {
-                                ...currentWorkflow,
-                                config: {
-                                    ...currentWorkflow.config,
-                                    endpoint: { ...currentWorkflow.config.endpoint, api_key: val }
-                                }
-                            } ) }
+                            value={ currentWorkflow.api_key }
+                            onChange={ ( val ) => setCurrentWorkflow( { ...currentWorkflow, api_key: val } ) }
                         />
 
-                        <Heading level={ 3 }>{ __( 'Workflow Steps', 'vip-workflow' ) }</Heading>
+                        <PanelBody title={ __( 'Rate Limiting', 'vip-workflow' ) } initialOpen={ false }>
+                            <ToggleControl
+                                label={ __( 'Enable Rate Limiting', 'vip-workflow' ) }
+                                checked={ currentWorkflow.rate_limit.enabled }
+                                onChange={ ( val ) => setCurrentWorkflow( {
+                                    ...currentWorkflow,
+                                    rate_limit: { ...currentWorkflow.rate_limit, enabled: val }
+                                } ) }
+                            />
+                            { currentWorkflow.rate_limit.enabled && (
+                                <Flex>
+                                    <FlexItem>
+                                        <TextControl
+                                            label={ __( 'Requests', 'vip-workflow' ) }
+                                            type="number"
+                                            value={ currentWorkflow.rate_limit.limit }
+                                            onChange={ ( val ) => setCurrentWorkflow( {
+                                                ...currentWorkflow,
+                                                rate_limit: { ...currentWorkflow.rate_limit, limit: parseInt(val) }
+                                            } ) }
+                                        />
+                                    </FlexItem>
+                                    <FlexItem>
+                                        <TextControl
+                                            label={ __( 'Window (seconds)', 'vip-workflow' ) }
+                                            type="number"
+                                            value={ currentWorkflow.rate_limit.window }
+                                            onChange={ ( val ) => setCurrentWorkflow( {
+                                                ...currentWorkflow,
+                                                rate_limit: { ...currentWorkflow.rate_limit, window: parseInt(val) }
+                                            } ) }
+                                        />
+                                    </FlexItem>
+                                </Flex>
+                            )}
+                        </PanelBody>
+
+                        <Heading level={ 3 } style={{ marginTop: '20px' }}>{ __( 'Workflow Steps', 'vip-workflow' ) }</Heading>
                         <p className="description">
-                            { __( 'Available tags:', 'vip-workflow' ) } <code>{'{{request.body.key}}'}</code>, <code>{'{{headers.x-header}}'}</code>, <code>{'{{steps.step_name.result_key}}'}</code>
+                            { __( 'Available tags:', 'vip-workflow' ) } <code>{'{{request.body.key}}'}</code>, <code>{'{{steps.step_name.result_key}}'}</code>
                         </p>
 
-                        { currentWorkflow.config.steps.map( ( step, index ) => (
-                            <Panel key={ step.id } style={{ border: '1px solid #ccc', marginBottom: '20px', padding: '15px' }}>
+                        { currentWorkflow.steps.map( ( step, index ) => (
+                            <PanelBody key={ step.id } title={`${index + 1}. ${step.type.toUpperCase()} - ${step.name || '(unnamed)'}`} initialOpen={ true }>
                                 <Flex justify="space-between" align="center" style={{ marginBottom: '15px' }}>
-                                    <Heading level={ 4 }>{ step.type.toUpperCase() }</Heading>
+                                    <ToggleControl
+                                        label={ __( 'Execute Asynchronously (Action Scheduler)', 'vip-workflow' ) }
+                                        checked={ step.async }
+                                        onChange={ ( val ) => updateStep( index, { async: val } ) }
+                                    />
                                     <Button isDestructive onClick={ () => {
-                                        const steps = [ ...currentWorkflow.config.steps ];
+                                        const steps = [ ...currentWorkflow.steps ];
                                         steps.splice( index, 1 );
-                                        setCurrentWorkflow({ ...currentWorkflow, config: { ...currentWorkflow.config, steps } });
+                                        setCurrentWorkflow({ ...currentWorkflow, steps });
                                     }}>
                                         { __( 'Remove Step', 'vip-workflow' ) }
                                     </Button>
                                 </Flex>
 
                                 <TextControl
-                                    label={ __( 'Step Name (optional, for referencing in later steps)', 'vip-workflow' ) }
+                                    label={ __( 'Step Name (for referencing in templates)', 'vip-workflow' ) }
                                     value={ step.name }
                                     onChange={ ( val ) => updateStep( index, { name: val } ) }
                                 />
@@ -260,14 +320,18 @@ export default function APIWorkflowManager() {
                                             value={ step.url }
                                             onChange={ ( val ) => updateStep( index, { url: val } ) }
                                         />
-                                        <TextControl
-                                            label={ __( 'Headers (JSON string)', 'vip-workflow' ) }
+                                        <Heading level={ 4 }>{ __( 'Headers (JSON)', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
                                             value={ step.headers }
+                                            height="100px"
+                                            extensions={[json(), completionExtension]}
                                             onChange={ ( val ) => updateStep( index, { headers: val } ) }
                                         />
-                                        <TextControl
-                                            label={ __( 'Body (JSON string)', 'vip-workflow' ) }
+                                        <Heading level={ 4 }>{ __( 'Body (JSON)', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
                                             value={ step.body }
+                                            height="200px"
+                                            extensions={[json(), completionExtension]}
                                             onChange={ ( val ) => updateStep( index, { body: val } ) }
                                         />
                                     </>
@@ -289,26 +353,33 @@ export default function APIWorkflowManager() {
                                             value={ step.post_title }
                                             onChange={ ( val ) => updateStep( index, { post_title: val } ) }
                                         />
-                                        <TextControl
-                                            label={ __( 'Content Template', 'vip-workflow' ) }
+                                        <Heading level={ 4 }>{ __( 'Content Template', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
                                             value={ step.post_content }
+                                            height="200px"
+                                            extensions={[completionExtension]}
                                             onChange={ ( val ) => updateStep( index, { post_content: val } ) }
                                         />
-                                        <TextControl
-                                            label={ __( 'Meta Data (JSON key:value pairs)', 'vip-workflow' ) }
+                                        <Heading level={ 4 }>{ __( 'Meta Data (JSON)', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
                                             value={ step.meta }
+                                            height="150px"
+                                            extensions={[json(), completionExtension]}
                                             onChange={ ( val ) => updateStep( index, { meta: val } ) }
                                         />
                                     </>
                                 )}
 
                                 { step.type === 'php_action' && (
-                                    <TextControl
-                                        label={ __( 'PHP Callback Function', 'vip-workflow' ) }
-                                        value={ step.callback }
-                                        onChange={ ( val ) => updateStep( index, { callback: val } ) }
-                                        help={ __( 'Function signature: function($context) { ... }', 'vip-workflow' ) }
-                                    />
+                                    <>
+                                        <Heading level={ 4 }>{ __( 'PHP Code', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
+                                            value={ step.code }
+                                            height="300px"
+                                            extensions={[php(), completionExtension]}
+                                            onChange={ ( val ) => updateStep( index, { code: val } ) }
+                                        />
+                                    </>
                                 )}
 
                                 { step.type === 'email' && (
@@ -323,14 +394,16 @@ export default function APIWorkflowManager() {
                                             value={ step.subject }
                                             onChange={ ( val ) => updateStep( index, { subject: val } ) }
                                         />
-                                        <TextControl
-                                            label={ __( 'Message', 'vip-workflow' ) }
+                                        <Heading level={ 4 }>{ __( 'Message', 'vip-workflow' ) }</Heading>
+                                        <CodeMirror
                                             value={ step.message }
+                                            height="200px"
+                                            extensions={[completionExtension]}
                                             onChange={ ( val ) => updateStep( index, { message: val } ) }
                                         />
                                     </>
                                 )}
-                            </Panel>
+                            </PanelBody>
                         ))}
 
                         <Flex justify="center" style={{ marginTop: '20px' }}>

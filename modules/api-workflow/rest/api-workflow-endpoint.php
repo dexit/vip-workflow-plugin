@@ -28,13 +28,24 @@ class APIWorkflowEndpoint {
 	}
 	public static function get_config() {
 		return rest_ensure_response( get_option( 'vw_api_endpoint_config', [
-			'path' => '/my-workflow-api',
-			'method' => 'POST',
-			'api_key' => ''
+			[
+				'id'         => 'default',
+				'name'       => 'Default Workflow',
+				'path'       => '/my-workflow-api',
+				'method'     => 'POST',
+				'api_key'    => '',
+				'rate_limit' => [
+					'enabled' => false,
+					'limit'   => 60,
+					'window'  => 60,
+				],
+				'steps'      => [],
+			],
 		] ) );
 	}
 	public static function update_config( $request ) {
 		$params = $request->get_params();
+		// In a real scenario, we might want to validate the schema here
 		update_option( 'vw_api_endpoint_config', $params );
 		return rest_ensure_response( $params );
 	}
