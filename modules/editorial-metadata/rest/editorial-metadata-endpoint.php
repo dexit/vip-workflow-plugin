@@ -11,8 +11,6 @@ use WP_Error;
 use WP_REST_Request;
 use WP_Term;
 
-defined( 'ABSPATH' ) || exit;
-
 class EditorialMetadataEndpoint {
 	/**
 	 * Initialize the class
@@ -25,227 +23,95 @@ class EditorialMetadataEndpoint {
 	 * Register the REST routes
 	 */
 	public static function register_routes() {
-		register_rest_route( VIP_WORKFLOW_REST_NAMESPACE, '/editorial-metadata', [
+		register_rest_route( 'vip-workflow/v1', '/editorial-metadata', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'handle_create_editorial_metadata' ],
 			'permission_callback' => [ __CLASS__, 'permission_callback' ],
 			'args'                => [
-				// Required parameters
 				'name'        => [
 					'required'          => true,
-					'validate_callback' => function ( $param ) {
-						return ! empty( trim( $param ) );
-					},
-					'sanitize_callback' => function ( $param ) {
-						return trim( $param );
-					},
+					'validate_callback' => function($p) { return ! empty( trim( $p ) ); },
+					'sanitize_callback' => function($p) { return trim( $p ); },
 				],
 				'type'        => [
 					'required'          => true,
-					'validate_callback' => function ( $param ) {
-						$param = trim( $param );
-						return ! empty( $param ) && in_array( $param, EditorialMetadata::SUPPORTED_METADATA_TYPES );
-					},
-					'sanitize_callback' => function ( $param ) {
-						return trim( $param );
-					},
+					'validate_callback' => function($p) { return in_array( trim( $p ), EditorialMetadata::SUPPORTED_METADATA_TYPES ); },
+					'sanitize_callback' => function($p) { return trim( $p ); },
 				],
-
-				// Optional parameters
 				'description' => [
 					'default'           => '',
-					'sanitize_callback' => function ( $param ) {
-						return stripslashes( wp_filter_nohtml_kses( trim( $param ) ) );
-					},
+					'sanitize_callback' => function($p) { return stripslashes( wp_filter_nohtml_kses( trim( $p ) ) ); },
+				],
+				'config'      => [
+					'default'           => [],
 				],
 			],
 		] );
 
-		register_rest_route( VIP_WORKFLOW_REST_NAMESPACE, '/editorial-metadata/(?P<id>[0-9]+)', [
+		register_rest_route( 'vip-workflow/v1', '/editorial-metadata/(?P<id>[0-9]+)', [
 			'methods'             => 'PUT',
 			'callback'            => [ __CLASS__, 'handle_update_editorial_metadata' ],
 			'permission_callback' => [ __CLASS__, 'permission_callback' ],
 			'args'                => [
-				// Required parameters
 				'name'        => [
 					'required'          => true,
-					'validate_callback' => function ( $param ) {
-						return ! empty( trim( $param ) );
-					},
-					'sanitize_callback' => function ( $param ) {
-						return trim( $param );
-					},
+					'validate_callback' => function($p) { return ! empty( trim( $p ) ); },
+					'sanitize_callback' => function($p) { return trim( $p ); },
 				],
 				'id'          => [
 					'required'          => true,
-					'validate_callback' => function ( $param ) {
-						$term_id = absint( $param );
-						$term    = get_term( $term_id, EditorialMetadata::METADATA_TAXONOMY );
-						return ( $term instanceof WP_Term );
-					},
-					'sanitize_callback' => function ( $param ) {
-						return absint( $param );
-					},
+					'validate_callback' => function($p) { return get_term( absint( $p ), EditorialMetadata::METADATA_TAXONOMY ) instanceof WP_Term; },
+					'sanitize_callback' => function($p) { return absint( $p ); },
 				],
-
-				// Optional parameters
 				'description' => [
 					'default'           => '',
-					'sanitize_callback' => function ( $param ) {
-						return stripslashes( wp_filter_nohtml_kses( trim( $param ) ) );
-					},
+					'sanitize_callback' => function($p) { return stripslashes( wp_filter_nohtml_kses( trim( $p ) ) ); },
+				],
+				'config'      => [
+					'default'           => [],
 				],
 			],
 		] );
 
-		register_rest_route( VIP_WORKFLOW_REST_NAMESPACE, '/editorial-metadata/(?P<id>[0-9]+)', [
+		register_rest_route( 'vip-workflow/v1', '/editorial-metadata/(?P<id>[0-9]+)', [
 			'methods'             => 'DELETE',
 			'callback'            => [ __CLASS__, 'handle_delete_editorial_metadata' ],
 			'permission_callback' => [ __CLASS__, 'permission_callback' ],
-			'args'                => [
-				// Required parameters
-				'id' => [
-					'required'          => true,
-					'validate_callback' => function ( $param ) {
-						$term_id = absint( $param );
-						$term    = get_term( $term_id, EditorialMetadata::METADATA_TAXONOMY );
-						return ( $term instanceof WP_Term );
-					},
-					'sanitize_callback' => function ( $param ) {
-						return absint( $param );
-					},
-				],
-			],
 		] );
 	}
 
-	/**
-	 * Check if the current user has permission to manage options
-	 */
 	public static function permission_callback() {
 		return current_user_can( 'manage_options' );
 	}
 
-	/**
-	 * Handle a request to create a new editorial metadata
-	 *
-	 * @param WP_REST_Request $request
-	 */
 	public static function handle_create_editorial_metadata( WP_REST_Request $request ) {
-		$editorial_metadata_name        = sanitize_text_field( $request->get_param( 'name' ) );
-		$editorial_metadata_slug        = sanitize_title( $request->get_param( 'name' ) );
-		$editorial_metadata_description = $request->get_param( 'description' );
-		$editorial_metadata_type        = $request->get_param( 'type' );
-
-		// Check that the name isn't numeric
-		if ( is_numeric( $editorial_metadata_name ) ) {
-			return new WP_Error( 'invalid', 'Please enter a valid, non-numeric name for the editorial metadata.', array( 'status' => 400 ) );
-		}
-
-		// Check to make sure the name isn't too long
-		if ( strlen( $editorial_metadata_name ) > 200 ) {
-			return new WP_Error( 'invalid', 'Editorial metadata name is too long. Please choose a name that is 200 characters or less.', array( 'status' => 400 ) );
-		}
-
-		// Check to make sure the editorial metadata doesn't already exist as another term because otherwise we'd get a fatal error
-		$term_exists = term_exists( $editorial_metadata_slug, EditorialMetadata::METADATA_TAXONOMY );
-
-		if ( $term_exists ) {
-			return new WP_Error( 'invalid', 'Editorial metadata name conflicts with existing term. Please choose another.', array( 'status' => 400 ) );
-		}
-
 		$args = [
-			'description' => $editorial_metadata_description,
-			'slug'        => $editorial_metadata_slug,
-			'type'        => $editorial_metadata_type,
-			'name'        => $editorial_metadata_name,
+			'name'        => sanitize_text_field( $request->get_param( 'name' ) ),
+			'description' => $request->get_param( 'description' ),
+			'type'        => $request->get_param( 'type' ),
+			'config'      => $request->get_param( 'config' ),
 		];
 
-		$add_editorial_metadata_result = EditorialMetadata::insert_editorial_metadata_term( $args );
-
-		return rest_ensure_response( $add_editorial_metadata_result );
+		return rest_ensure_response( EditorialMetadata::insert_editorial_metadata_term( $args ) );
 	}
 
-	/**
-	 * Handle a request to update the new editorial metadata
-	 *
-	 * @param WP_REST_Request $request
-	 */
 	public static function handle_update_editorial_metadata( WP_REST_Request $request ) {
-		$term_id                        = $request->get_param( 'id' );
-		$editorial_metadata_name        = sanitize_text_field( $request->get_param( 'name' ) );
-		$editorial_metadata_slug        = sanitize_title( $request->get_param( 'name' ) );
-		$editorial_metadata_description = $request->get_param( 'description' );
-
-		// Check that the name isn't numeric
-		if ( is_numeric( $editorial_metadata_name ) ) {
-			return new WP_Error( 'invalid', 'Please enter a valid, non-numeric name for the editorial metadata.', array( 'status' => 400 ) );
-		}
-
-		// Check to make sure the name isn't too long
-		if ( strlen( $editorial_metadata_name ) > 200 ) {
-			return new WP_Error( 'invalid', 'Editorial metadata name is too long. Please choose a name that is 200 characters or less.', array( 'status' => 400 ) );
-		}
-
-		// Check to make sure the editorial metadata doesn't already exist
-		$editorial_metadata_by_id = EditorialMetadata::get_editorial_metadata_term_by( 'id', $term_id );
-
-		$editorial_metadata_by_slug = EditorialMetadata::get_editorial_metadata_term_by( 'slug', $editorial_metadata_slug );
-
-		if ( $editorial_metadata_by_slug && $editorial_metadata_by_id && $editorial_metadata_by_id->slug !== $editorial_metadata_slug ) {
-			return new WP_Error( 'invalid', 'Editorial Metadata already exists. Please choose another name.', array( 'status' => 400 ) );
-		}
-
-		// Check to make sure the editorial metadata doesn't already exist as another term because otherwise we'd get a fatal error
-		$term_exists = term_exists( $editorial_metadata_slug, EditorialMetadata::METADATA_TAXONOMY );
-
-		// term_id from term_exists is a string, while term_id is an integer so not using strict comparison
-		if ( $term_exists && isset( $term_exists['term_id'] ) && $term_exists['term_id'] != $term_id ) {
-			return new WP_Error( 'invalid', 'Editorial metadata name conflicts with existing term. Please choose another.', array( 'status' => 400 ) );
-			;
-		}
-
-		// get the necessary editorial metadata fields together
+		$term_id = $request->get_param( 'id' );
 		$args = [
-			'description' => $editorial_metadata_description,
-			'slug'        => $editorial_metadata_slug,
-			'name'        => $editorial_metadata_name,
+			'name'        => sanitize_text_field( $request->get_param( 'name' ) ),
+			'description' => $request->get_param( 'description' ),
+			'config'      => $request->get_param( 'config' ),
 		];
 
-		$update_editorial_metadata_result = EditorialMetadata::update_editorial_metadata_term( $term_id, $args );
-
-		// Regardless of an error being thrown, the result will be returned so the client can handle it.
-		return rest_ensure_response( $update_editorial_metadata_result );
+		return rest_ensure_response( EditorialMetadata::update_editorial_metadata_term( $term_id, $args ) );
 	}
 
-	/**
-	 * Handle a request to delete the editorial metadata
-	 *
-	 * @param WP_REST_Request $request
-	 */
 	public static function handle_delete_editorial_metadata( WP_REST_Request $request ) {
-		$term_id = $request->get_param( 'id' );
-		// Check to make sure the editorial metadata exists
-		$editorial_metadata_by_id = EditorialMetadata::get_editorial_metadata_term_by( 'id', $term_id );
-		if ( ! $editorial_metadata_by_id ) {
-			return new WP_Error( 'invalid', 'Editorial Metadata does not exist.', array( 'status' => 400 ) );
-		}
-
-		$delete_editorial_metadata_result = EditorialMetadata::delete_editorial_metadata_term( $term_id );
-
-		// Regardless of an error being thrown, the result will be returned so the client can handle it.
-		return rest_ensure_response( $delete_editorial_metadata_result );
+		return rest_ensure_response( EditorialMetadata::delete_editorial_metadata_term( $request->get_param( 'id' ) ) );
 	}
 
-	// Public API
-
-	/**
-	 * Get the URL for the editorial metadata CRUD endpoint
-	 *
-	 * @return string The CRUD URL
-	 */
 	public static function get_url() {
-		return rest_url( sprintf( '%s/%s', VIP_WORKFLOW_REST_NAMESPACE, 'editorial-metadata/' ) );
+		return rest_url( sprintf( '%s/%s', 'vip-workflow/v1', 'editorial-metadata/' ) );
 	}
 }
 

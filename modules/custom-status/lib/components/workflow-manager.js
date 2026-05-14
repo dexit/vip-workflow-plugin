@@ -155,7 +155,7 @@ export default function WorkflowManager( { customStatuses, editorialMetadatas } 
 					<Tooltip
 						text={ __( 'This is the start point for your publishing workflow', 'vip-workflow' ) }
 					>
-						<Heading level={ 4 }>{ __( 'Starting Point', 'vip-workflow' ) }</Heading>
+						<Heading level={ 4 }>{ __( 'API Ingestion', 'vip-workflow' ) }</Heading>
 					</Tooltip>
 				</Flex>
 
@@ -224,7 +224,7 @@ export default function WorkflowManager( { customStatuses, editorialMetadatas } 
 					<Tooltip
 						text={ __( 'This is the end point for your publishing workflow', 'vip-workflow' ) }
 					>
-						<Heading level={ 4 }>{ __( 'Publish', 'vip-workflow' ) }</Heading>
+						<Heading level={ 4 }>{ __( 'Despatch', 'vip-workflow' ) }</Heading>
 					</Tooltip>
 				</Flex>
 			</div>

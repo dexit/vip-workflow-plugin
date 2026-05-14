@@ -4,10 +4,16 @@ import domReady from '@wordpress/dom-ready';
 import { createRoot } from '@wordpress/element';
 
 import WorkflowManager from './components/workflow-manager';
+import EndpointConfig from './components/endpoint-config';
 
 domReady( () => {
-	const workflowManagerRoot = document.getElementById( 'workflow-manager-root' );
+	const endpointConfigRoot = document.getElementById( 'endpoint-config-root' );
+	if ( endpointConfigRoot ) {
+		const root = createRoot( endpointConfigRoot );
+		root.render( <EndpointConfig /> );
+	}
 
+	const workflowManagerRoot = document.getElementById( 'workflow-manager-root' );
 	if ( workflowManagerRoot ) {
 		const root = createRoot( workflowManagerRoot );
 		root.render(

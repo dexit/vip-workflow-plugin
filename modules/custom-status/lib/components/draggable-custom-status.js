@@ -23,6 +23,8 @@ export default function DraggableCustomStatus( {
 		'custom-status-item'
 	);
 
+	const componentNames = customStatus.meta?.required_metadatas?.map(m => m.name).join(', ') || '';
+
 	return (
 		<>
 			<div
@@ -45,6 +47,11 @@ export default function DraggableCustomStatus( {
 					<Text>
 						<i>{ customStatus?.description }</i>
 					</Text>
+					{ componentNames && (
+						<Text style={{ marginTop: '5px', fontSize: '11px', color: '#666' }}>
+							<strong>Components:</strong> { componentNames }
+						</Text>
+					)}
 				</Flex>
 
 				<Flex
@@ -53,7 +60,7 @@ export default function DraggableCustomStatus( {
 					align={ 'end' }
 					className={ 'custom-status-buttons' }
 				>
-					<Tooltip text={ __( 'Delete the status', 'vip-workflow' ) }>
+					<Tooltip text={ __( 'Delete the step', 'vip-workflow' ) }>
 						<Button
 							size="compact"
 							className="delete"
@@ -66,7 +73,7 @@ export default function DraggableCustomStatus( {
 							} }
 						></Button>
 					</Tooltip>
-					<Tooltip text={ __( 'Edit the status', 'vip-workflow' ) }>
+					<Tooltip text={ __( 'Edit the step', 'vip-workflow' ) }>
 						<Button
 							size="compact"
 							className="edit"
