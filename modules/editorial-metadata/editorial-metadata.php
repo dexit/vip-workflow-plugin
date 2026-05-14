@@ -68,9 +68,6 @@ class EditorialMetadata {
 	}
 
 	public static function setup_install(): void {
-		if ( ! InstallUtilities::is_first_install() ) {
-			return;
-		}
 	}
 
 	public static function add_admin_menu(): void {
