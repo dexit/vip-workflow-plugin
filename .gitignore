@@ -13,3 +13,4 @@ artifacts/
 # Build files
 *.hot-update.js
 *.hot-update.json
+wp-content/

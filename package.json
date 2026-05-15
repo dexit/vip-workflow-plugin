@@ -64,5 +64,10 @@
   },
   "stylelint": {
     "extends": "./node_modules/@wordpress/scripts/config/.stylelintrc.json"
+  },
+  "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-php": "^6.0.2",
+    "@uiw/react-codemirror": "^4.25.9"
   }
 }
