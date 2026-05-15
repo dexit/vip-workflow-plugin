@@ -1,321 +1,242 @@
 <?php
 /**
- * class APIWorkflow
- * Manage custom REST API endpoints and workflows using Steps (Statuses) and Components (Metadata).
+ * Plugin Name: API Workflow Ingestion
+ * Description: Robust REST API ingestion with PHP hooks, custom actions, and Action Scheduler dispatching.
  */
 
-namespace VIPWorkflow\Modules;
+if ( ! defined( 'ABSPATH' ) ) {
+	return;
+}
 
+// Load dependencies
 require_once __DIR__ . '/rest/api-workflow-endpoint.php';
 
-use VIPWorkflow\Modules\CustomStatus;
-use VIPWorkflow\Modules\EditorialMetadata;
+// Ensure Action Scheduler is loaded
+if ( file_exists( WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php' ) ) {
+    require_once WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php';
+}
 
-class APIWorkflow {
+add_action( 'rest_api_init', 'vw_api_register_dynamic_routes' );
 
-	public static function init(): void {
-		add_action( 'rest_api_init', [ __CLASS__, 'register_dynamic_routes' ] );
-		add_action( 'vw_api_execute_async_step', [ __CLASS__, 'handle_async_step' ], 10, 2 );
-		add_action( 'admin_menu', [ __CLASS__, 'add_admin_menu' ] );
-		add_action( 'admin_enqueue_scripts', [ __CLASS__, 'admin_enqueue_scripts' ] );
-	}
+/**
+ * Register all configured dynamic routes.
+ */
+function vw_api_register_dynamic_routes() {
+	$config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
+	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
 
-	public static function add_admin_menu(): void {
-		add_submenu_page(
-			'vw-custom-status',
-			__( 'API Workflows', 'vip-workflow' ),
-			__( 'API Workflows', 'vip-workflow' ),
-			'manage_options',
-			'vw-api-workflow',
-			[ __CLASS__, 'render_admin_page' ]
-		);
-	}
-
-	public static function render_admin_page(): void {
-		require_once __DIR__ . '/views/manage-api-workflow.php';
-	}
-
-	public static function admin_enqueue_scripts( $hook ): void {
-		if ( strpos( $hook, 'vw-api-workflow' ) === false ) {
-			return;
+	foreach ( $workflows as $workflow ) {
+		if ( empty( $workflow['route'] ) || empty( $workflow['id'] ) ) {
+			continue;
 		}
 
-		$asset_path = VIP_WORKFLOW_ROOT . '/dist/modules/api-workflow/api-workflow.asset.php';
-		if ( ! file_exists( $asset_path ) ) {
-			return;
-		}
-
-		$asset_file = include $asset_path;
-		wp_enqueue_script(
-			'vw-api-workflow-js',
-			VIP_WORKFLOW_URL . 'dist/modules/api-workflow/api-workflow.js',
-			$asset_file['dependencies'],
-			$asset_file['version'],
-			true
-		);
-		wp_enqueue_style( 'wp-components' );
-	}
-
-	public static function register_dynamic_routes(): void {
-		$workflows = get_option( 'vw_api_endpoint_config' );
-		if ( empty( $workflows ) || ! is_array( $workflows ) ) {
-			return;
-		}
-
-		foreach ( $workflows as $workflow ) {
-			if ( empty( $workflow['path'] ) ) {
-				continue;
-			}
-
-			register_rest_route( 'vw-api/v1', $workflow['path'], [
-				'methods'             => $workflow['method'] ?? 'POST',
-				'callback'            => function ( $request ) use ( $workflow ) {
-					return self::handle_request( $request, $workflow );
-				},
-				'permission_callback' => function () use ( $workflow ) {
-					if ( ! empty( $workflow['api_key'] ) ) {
-						$header_key = $_SERVER['HTTP_X_VW_API_KEY'] ?? '';
-						return $header_key === $workflow['api_key'];
-					}
-					return true;
-				},
-			] );
-		}
-	}
-
-	public static function handle_request( $request, $workflow ) {
-		if ( ! self::check_rate_limit( $workflow ) ) {
-			return new \WP_Error( 'rest_rate_limited', __( 'Rate limit exceeded.', 'vip-workflow' ), [ 'status' => 429 ] );
-		}
-
-		$steps = $workflow['steps'] ?? [];
-		$context = [
-			'request' => [
-				'params'  => $request->get_params(),
-				'headers' => $request->get_headers(),
-				'body'    => $request->get_json_params(),
-			],
-			'steps'   => [],
-			'workflow' => $workflow,
-		];
-
-		/**
-		 * Action before workflow starts
-		 */
-		do_action( 'vw_api_before_workflow', $workflow, $context );
-
-		$results = [];
-		foreach ( $steps as $step ) {
-			$step_id = $step['id'] ?? uniqid();
-
-			/**
-			 * Action before step executes
-			 */
-			do_action( 'vw_api_before_step', $step, $context );
-
-			if ( ! empty( $step['async'] ) && function_exists( 'as_enqueue_async_action' ) ) {
-				as_enqueue_async_action( 'vw_api_execute_async_step', [ 'step' => $step, 'context' => $context ], 'vip-workflow' );
-				$step_result = [ 'status' => 'queued', 'step_id' => $step_id ];
-			} else {
-				$step_result = self::execute_step( $step, $context );
-			}
-
-			$results[] = [
-				'step_id' => $step_id,
-				'name'    => $step['name'] ?? '',
-				'result'  => $step_result
-			];
-
-			if ( ! empty( $step['name'] ) ) {
-				$context['steps'][ $step['name'] ] = $step_result;
-			} else {
-				$context['steps'][ $step_id ] = $step_result;
-			}
-
-			/**
-			 * Action after step executes
-			 */
-			do_action( 'vw_api_after_step', $step, $step_result, $context );
-		}
-
-		/**
-		 * Action after workflow completes
-		 */
-		do_action( 'vw_api_after_workflow', $workflow, $results, $context );
-
-		return rest_ensure_response( [
-			'success' => true,
-			'data'    => $results
-		] );
-	}
-
-	public static function handle_async_step( $step, $context ) {
-		self::execute_step( $step, $context );
-	}
-
-	private static function check_rate_limit( $workflow ) {
-		$rate_limit = $workflow['rate_limit'] ?? [];
-		if ( empty( $rate_limit['enabled'] ) ) {
-			return true;
-		}
-
-		$limit = $rate_limit['limit'] ?? 60;
-		$window = $rate_limit['window'] ?? 60;
-		$ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-		$workflow_id = $workflow['id'] ?? 'default';
-		$transient_key = "vw_ratelimit_{$workflow_id}_{$ip}";
-
-		$requests = get_transient( $transient_key );
-		if ( false === $requests ) {
-			set_transient( $transient_key, 1, $window );
-			return true;
-		}
-
-		if ( $requests >= $limit ) {
-			return false;
-		}
-
-		set_transient( $transient_key, $requests + 1, $window );
-		return true;
-	}
-
-	private static function execute_step( $step, &$context ) {
-		$type = $step['type'] ?? '';
-
-		switch ( $type ) {
-			case 'webhook':
-				return self::send_webhook( $step, $context );
-			case 'php_action':
-				return self::execute_php_action( $step, $context );
-			case 'ingest':
-				return self::ingest_post( $step, $context );
-			case 'email':
-				return self::send_email( $step, $context );
-		}
-
-		return null;
-	}
-
-	private static function execute_php_action( $step, &$context ) {
-		$code = $step['code'] ?? '';
-		if ( empty( $code ) ) {
-			$callback = $step['callback'] ?? '';
-			if ( ! empty( $callback ) && is_callable( $callback ) ) {
-				return call_user_func( $callback, $context );
-			}
-			return null;
-		}
-
-		// Security: In a real-world VIP plugin, we'd be very careful with eval.
-		// For this implementation, we'll use it as requested for the "code editor" feature.
-		try {
-			ob_start();
-			$result = eval( '?>' . $code );
-			$output = ob_get_clean();
-			return [
-				'result' => $result,
-				'output' => $output,
-			];
-		} catch ( \Throwable $e ) {
-			return [
-				'error' => $e->getMessage(),
-			];
-		}
-	}
-
-	private static function send_webhook( $config, $context ) {
-		$url = self::parse_template( $config['url'] ?? '', $context );
-		$method = $config['method'] ?? 'POST';
-		$headers = self::parse_template( $config['headers'] ?? [], $context );
-		$body = self::parse_template( $config['body'] ?? '', $context );
-
-		if ( is_string( $headers ) ) {
-			$headers = json_decode( $headers, true ) ?: [];
-		}
-		if ( is_string( $body ) ) {
-			$decoded_body = json_decode( $body, true );
-			if ( json_last_error() === JSON_ERROR_NONE ) {
-				$body = $decoded_body;
-			}
-		}
-
-		$response = wp_remote_request( $url, [
-			'method'  => $method,
-			'body'    => is_array( $body ) ? wp_json_encode( $body ) : $body,
-			'headers' => array_merge( [ 'Content-Type' => 'application/json' ], (array)$headers ),
-		] );
-
-		return is_wp_error( $response ) ? [ 'error' => $response->get_error_message() ] : [
-			'status' => wp_remote_retrieve_response_code( $response ),
-			'body'   => wp_remote_retrieve_body( $response ),
-		];
-	}
-
-	private static function ingest_post( $step, $context ) {
-		$post_type = $step['post_type'] ?? 'post';
-		$post_title = self::parse_template( $step['post_title'] ?? '', $context );
-		$post_content = self::parse_template( $step['post_content'] ?? '', $context );
-		$meta = self::parse_template( $step['meta'] ?? [], $context );
-
-		if ( is_string( $meta ) ) {
-			$meta = json_decode( $meta, true ) ?: [];
-		}
-
-		$post_id = wp_insert_post( [
-			'post_type'    => $post_type,
-			'post_title'   => $post_title,
-			'post_content' => $post_content,
-			'post_status'  => 'draft',
-		] );
-
-		if ( is_wp_error( $post_id ) ) {
-			return [ 'error' => $post_id->get_error_message() ];
-		}
-
-		foreach ( $meta as $key => $value ) {
-			update_post_meta( $post_id, $key, $value );
-		}
-
-		return [ 'post_id' => $post_id ];
-	}
-
-	private static function send_email( $step, $context ) {
-		$to = self::parse_template( $step['to'] ?? '', $context );
-		$subject = self::parse_template( $step['subject'] ?? '', $context );
-		$message = self::parse_template( $step['message'] ?? '', $context );
-
-		$sent = wp_mail( $to, $subject, $message );
-
-		return [ 'sent' => $sent ];
-	}
-
-	private static function parse_template( $data, $context ) {
-		if ( is_array( $data ) ) {
-			foreach ( $data as $key => $value ) {
-				$data[ $key ] = self::parse_template( $value, $context );
-			}
-			return $data;
-		}
-
-		if ( ! is_string( $data ) ) {
-			return $data;
-		}
-
-		return preg_replace_callback( '/{{(.*?)}}/', function ( $matches ) use ( $context ) {
-			$path = explode( '.', trim( $matches[1] ) );
-			$value = $context;
-			foreach ( $path as $segment ) {
-				if ( is_array( $value ) && isset( $value[ $segment ] ) ) {
-					$value = $value[ $segment ];
-				} elseif ( is_object( $value ) && isset( $value->$segment ) ) {
-					$value = $value->$segment;
-				} else {
-					return $matches[0];
-				}
-			}
-			return is_scalar( $value ) ? $value : json_encode( $value );
-		}, $data );
+		register_rest_route( 'vw-ingest/v1', '/' . ltrim( $workflow['route'], '/' ), array(
+			'methods'             => isset( $workflow['method'] ) ? $workflow['method'] : 'POST',
+			'callback'            => function( $request ) use ( $workflow ) {
+				return vw_api_handle_workflow_request( $workflow, $request );
+			},
+			'permission_callback' => '__return_true',
+		) );
 	}
 }
 
-APIWorkflow::init();
+/**
+ * Main request handler for a specific workflow.
+ */
+function vw_api_handle_workflow_request( $workflow, $request ) {
+	$workflow_id = $workflow['id'];
+	$client_ip   = $request->get_header( 'X-Forwarded-For' ) ?: (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0');
+
+	// 1. Rate Limiting
+	$limit  = isset( $workflow['rate_limit'] ) ? (int) $workflow['rate_limit'] : 0;
+	$window = isset( $workflow['rate_window'] ) ? (int) $workflow['rate_window'] : 3600;
+
+	if ( $limit > 0 ) {
+		$transient_key = 'vw_api_rate_' . md5( $workflow_id . $client_ip );
+		$count         = (int) get_transient( $transient_key );
+
+		if ( $count >= $limit ) {
+			return new WP_Error( 'rate_limit_exceeded', 'Too many requests.', array( 'status' => 429 ) );
+		}
+		set_transient( $transient_key, $count + 1, $window );
+	}
+
+	// 2. Context
+	$context = array(
+		'request' => array(
+			'body'    => $request->get_json_params(),
+			'params'  => $request->get_params(),
+			'headers' => $request->get_headers(),
+		),
+		'steps'   => array(),
+	);
+
+	do_action( 'vw_api_before_workflow', $workflow, $request );
+
+	// 3. Step Execution
+	$steps = isset( $workflow['steps'] ) ? $workflow['steps'] : array();
+	usort( $steps, function( $a, $b ) {
+		return (isset($a['order']) ? (int)$a['order'] : 0) - (isset($b['order']) ? (int)$b['order'] : 0);
+	} );
+
+	foreach ( $steps as $step ) {
+		if ( ! empty( $step['async'] ) ) {
+			if ( function_exists( 'as_enqueue_async_action' ) ) {
+				as_enqueue_async_action( 'vw_api_process_async_step', array(
+					'step'    => $step,
+					'context' => $context,
+				), 'vw-api-workflow' );
+				$context['steps'][ $step['id'] ] = array( 'status' => 'queued' );
+				continue;
+			}
+		}
+
+		$result = vw_api_execute_step( $step, $context );
+		$context['steps'][ $step['id'] ] = array( 'result' => $result );
+
+		if ( is_wp_error( $result ) ) {
+			break;
+		}
+	}
+
+	do_action( 'vw_api_after_workflow', $workflow, $context );
+
+	return rest_ensure_response( array(
+		'success' => true,
+		'workflow_id' => $workflow_id,
+		'steps'   => $context['steps'],
+	) );
+}
+
+/**
+ * Execute a single step.
+ */
+function vw_api_execute_step( $step, &$context ) {
+	$type   = $step['type'];
+	$config = isset( $step['config'] ) ? $step['config'] : array();
+
+	do_action( 'vw_api_before_step', $step, $context );
+
+	$result = null;
+
+	switch ( $type ) {
+		case 'webhook':
+			$url = vw_api_parse_template( isset($config['url']) ? $config['url'] : '', $context );
+			$args = array(
+				'method'  => isset( $config['method'] ) ? $config['method'] : 'POST',
+				'headers' => array( 'Content-Type' => 'application/json' ),
+				'body'    => json_encode( vw_api_parse_template_array( isset($config['payload']) ? $config['payload'] : array(), $context ) ),
+			);
+			$response = wp_remote_request( $url, $args );
+			$result   = is_wp_error( $response ) ? $response : json_decode( wp_remote_retrieve_body( $response ), true );
+			break;
+
+		case 'php_action':
+			$php_code = isset($config['php_code']) ? $config['php_code'] : '';
+			try {
+				$execute = function( $__code, $request, $context ) {
+					// Add helpful globals to scope
+					return eval( '?>' . $__code );
+				};
+				$result = $execute( $php_code, $context['request'], $context );
+			} catch ( Throwable $e ) {
+				$result = new WP_Error( 'php_error', $e->getMessage() );
+			}
+			break;
+
+		case 'ingest':
+			$post_data = array(
+				'post_type'   => isset($config['post_type']) ? $config['post_type'] : 'post',
+				'post_title'  => vw_api_parse_template( isset($config['title']) ? $config['title'] : 'Untitled', $context ),
+				'post_status' => 'publish',
+			);
+			$post_id = wp_insert_post( $post_data );
+			if ( ! is_wp_error( $post_id ) ) {
+				if ( isset( $config['meta'] ) && is_array( $config['meta'] ) ) {
+					foreach ( $config['meta'] as $key => $template ) {
+						update_post_meta( $post_id, $key, vw_api_parse_template( $template, $context ) );
+					}
+				}
+				$result = array( 'post_id' => $post_id );
+			} else {
+				$result = $post_id;
+			}
+			break;
+	}
+
+	do_action( 'vw_api_after_step', $step, $result, $context );
+
+	return $result;
+}
+
+add_action( 'vw_api_process_async_step', 'vw_api_run_async_step', 10, 2 );
+function vw_api_run_async_step( $step, $context ) {
+	vw_api_execute_step( $step, $context );
+}
+
+function vw_api_parse_template( $string, $context ) {
+    if ( ! is_string( $string ) ) return $string;
+	return preg_replace_callback( '/\{\{(.*?)\}\}/', function( $matches ) use ( $context ) {
+		$path = explode( '.', trim( $matches[1] ) );
+		$value = $context;
+		foreach ( $path as $segment ) {
+			if ( is_array( $value ) && isset( $value[ $segment ] ) ) {
+				$value = $value[ $segment ];
+			} else {
+				return $matches[0];
+			}
+		}
+		return is_scalar( $value ) ? $value : json_encode( $value );
+	}, $string );
+}
+
+function vw_api_parse_template_array( $array, $context ) {
+	if ( ! is_array( $array ) ) {
+		return vw_api_parse_template( $array, $context );
+	}
+	foreach ( $array as $key => $value ) {
+		$array[ $key ] = vw_api_parse_template_array( $value, $context );
+	}
+	return $array;
+}
+
+// Admin UI Integration
+add_action( 'admin_menu', function() {
+    add_menu_page(
+        'API Workflows',
+        'API Workflows',
+        'manage_options',
+        'vw-api-workflows',
+        function() { echo '<div id="vw-api-workflow-admin"></div>'; },
+        'dashicons-rest-api',
+        30
+    );
+} );
+
+add_action( 'admin_enqueue_scripts', function( $hook ) {
+    if ( 'toplevel_page_vw-api-workflows' !== $hook ) {
+        return;
+    }
+
+    $asset_file = __DIR__ . '/build/index.asset.php';
+
+    if ( file_exists( $asset_file ) ) {
+        $assets = require $asset_file;
+        wp_enqueue_script(
+            'vw-api-workflow-admin',
+            plugins_url( 'build/index.js', __FILE__ ),
+            $assets['dependencies'],
+            $assets['version'],
+            true
+        );
+
+        if ( file_exists( __DIR__ . '/build/index.css' ) ) {
+            wp_enqueue_style(
+                'vw-api-workflow-admin',
+                plugins_url( 'build/index.css', __FILE__ ),
+                array(),
+                $assets['version']
+            );
+        }
+    }
+} );
