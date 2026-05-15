@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: API Workflow Ingestion
- * Description: Robust REST API ingestion with PHP hooks, custom actions, and Action Scheduler dispatching.
+ * Description: Advanced REST API ingestion with Multi-Entry, DTO Mapping, and Conditional Logic.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -17,35 +17,64 @@ if ( file_exists( WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.p
 }
 
 add_action( 'rest_api_init', 'vw_api_register_dynamic_routes' );
+add_action( 'init', 'vw_api_register_dynamic_hooks' );
 
 /**
- * Register all configured dynamic routes.
+ * Register all configured dynamic REST routes.
  */
 function vw_api_register_dynamic_routes() {
 	$config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
 	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
 
 	foreach ( $workflows as $workflow ) {
-		if ( empty( $workflow['route'] ) || empty( $workflow['id'] ) ) {
-			continue;
-		}
+		$entries = isset( $workflow['entries'] ) ? $workflow['entries'] : array();
+        // Backward compatibility for old "route" field
+        if ( empty($entries) && !empty($workflow['route']) ) {
+            $entries[] = array('type' => 'rest', 'route' => $workflow['route'], 'method' => isset($workflow['method']) ? $workflow['method'] : 'POST');
+        }
 
-		register_rest_route( 'vw-ingest/v1', '/' . ltrim( $workflow['route'], '/' ), array(
-			'methods'             => isset( $workflow['method'] ) ? $workflow['method'] : 'POST',
-			'callback'            => function( $request ) use ( $workflow ) {
-				return vw_api_handle_workflow_request( $workflow, $request );
-			},
-			'permission_callback' => '__return_true',
-		) );
+		foreach ( $entries as $entry ) {
+            if ( $entry['type'] !== 'rest' || empty($entry['route']) ) continue;
+
+            register_rest_route( 'vw-ingest/v1', '/' . ltrim( $entry['route'], '/' ), array(
+                'methods'             => isset( $entry['method'] ) ? $entry['method'] : 'POST',
+                'callback'            => function( $request ) use ( $workflow ) {
+                    return vw_api_handle_workflow_request( $workflow, $request );
+                },
+                'permission_callback' => '__return_true',
+            ) );
+        }
 	}
 }
 
 /**
- * Main request handler for a specific workflow.
+ * Register dynamic hooks to trigger workflows.
+ */
+function vw_api_register_dynamic_hooks() {
+    $config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
+	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
+
+	foreach ( $workflows as $workflow ) {
+		$entries = isset( $workflow['entries'] ) ? $workflow['entries'] : array();
+		foreach ( $entries as $entry ) {
+            if ( $entry['type'] !== 'hook' || empty($entry['action']) ) continue;
+
+            add_action( $entry['action'], function( $data = array() ) use ( $workflow ) {
+                // Wrap data in a pseudo-request object for the engine
+                $request = new WP_REST_Request();
+                $request->set_body_params( (array) $data );
+                vw_api_handle_workflow_request( $workflow, $request );
+            }, 10, 1 );
+        }
+	}
+}
+
+/**
+ * Main request handler.
  */
 function vw_api_handle_workflow_request( $workflow, $request ) {
 	$workflow_id = $workflow['id'];
-	$client_ip   = $request->get_header( 'X-Forwarded-For' ) ?: (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0');
+	$client_ip   = $request instanceof WP_REST_Request ? ($request->get_header( 'X-Forwarded-For' ) ?: (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0')) : '0.0.0.0';
 
 	// 1. Rate Limiting
 	$limit  = isset( $workflow['rate_limit'] ) ? (int) $workflow['rate_limit'] : 0;
@@ -64,11 +93,12 @@ function vw_api_handle_workflow_request( $workflow, $request ) {
 	// 2. Context
 	$context = array(
 		'request' => array(
-			'body'    => $request->get_json_params(),
-			'params'  => $request->get_params(),
-			'headers' => $request->get_headers(),
+			'body'    => $request instanceof WP_REST_Request ? $request->get_json_params() : $request->get_body_params(),
+			'params'  => $request instanceof WP_REST_Request ? $request->get_params() : array(),
+			'headers' => $request instanceof WP_REST_Request ? $request->get_headers() : array(),
 		),
 		'steps'   => array(),
+        'vars'    => array(), // For DTO storage
 	);
 
 	do_action( 'vw_api_before_workflow', $workflow, $request );
@@ -92,6 +122,12 @@ function vw_api_handle_workflow_request( $workflow, $request ) {
 		}
 
 		$result = vw_api_execute_step( $step, $context );
+
+        // Handle logic skipping
+        if ( is_array($result) && isset($result['__skip_workflow']) && $result['__skip_workflow'] ) {
+            break;
+        }
+
 		$context['steps'][ $step['id'] ] = array( 'result' => $result );
 
 		if ( is_wp_error( $result ) ) {
@@ -109,7 +145,7 @@ function vw_api_handle_workflow_request( $workflow, $request ) {
 }
 
 /**
- * Execute a single step.
+ * Execute a single step with advanced types.
  */
 function vw_api_execute_step( $step, &$context ) {
 	$type   = $step['type'];
@@ -135,7 +171,6 @@ function vw_api_execute_step( $step, &$context ) {
 			$php_code = isset($config['php_code']) ? $config['php_code'] : '';
 			try {
 				$execute = function( $__code, $request, $context ) {
-					// Add helpful globals to scope
 					return eval( '?>' . $__code );
 				};
 				$result = $execute( $php_code, $context['request'], $context );
@@ -143,6 +178,30 @@ function vw_api_execute_step( $step, &$context ) {
 				$result = new WP_Error( 'php_error', $e->getMessage() );
 			}
 			break;
+
+        case 'dto_mapping':
+            $dto = array();
+            $mappings = isset($config['mapping']) ? $config['mapping'] : array();
+            foreach ( $mappings as $key => $template ) {
+                $dto[$key] = vw_api_parse_template( $template, $context );
+            }
+            $result = $dto;
+            $context['vars'][$step['id']] = $dto; // Store in vars for easy access
+            break;
+
+        case 'logic':
+            $condition = isset($config['condition']) ? $config['condition'] : '';
+            $expression = vw_api_parse_template($condition, $context);
+            // Simple truthy check for now, can be expanded to eval expressions
+            if ( empty($expression) || $expression === 'false' || $expression === '0' || $expression === 'null' ) {
+                if ( isset($config['on_false']) && $config['on_false'] === 'stop' ) {
+                    return array('__skip_workflow' => true);
+                }
+                $result = array('condition_met' => false);
+            } else {
+                $result = array('condition_met' => true);
+            }
+            break;
 
 		case 'ingest':
 			$post_data = array(
@@ -180,7 +239,7 @@ function vw_api_parse_template( $string, $context ) {
 		$path = explode( '.', trim( $matches[1] ) );
 		$value = $context;
 		foreach ( $path as $segment ) {
-			if ( is_array( $value ) && isset( $value[ $segment ] ) ) {
+			if ( (is_array( $value ) || $value instanceof ArrayAccess) && isset( $value[ $segment ] ) ) {
 				$value = $value[ $segment ];
 			} else {
 				return $matches[0];
