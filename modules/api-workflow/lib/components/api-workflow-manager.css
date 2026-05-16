@@ -4,12 +4,32 @@
     border: 1px solid #ccd0d4;
     box-shadow: 0 1px 1px rgba(0,0,0,.04);
 }
+.manager-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
 .workflow-card {
     background: #fcfcfc;
     border-left: 4px solid #007cba;
     padding: 20px;
     margin-bottom: 30px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.workflow-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+.entry-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    background: #fff;
+    padding: 8px;
+    border: 1px solid #eee;
+    border-radius: 4px;
 }
 .step-block {
     border: 1px solid #ddd;
@@ -19,7 +39,7 @@
 }
 .step-header {
     background: #f1f1f1;
-    padding: 10px;
+    padding: 8px 15px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -27,17 +47,22 @@
 }
 .step-drag-handle {
     cursor: grab;
-    padding: 5px;
-    color: #888;
+    margin-right: 10px;
 }
-.step-drag-handle:active {
-    cursor: grabbing;
+.mapping-editor h4, .logic-editor label {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    display: block;
 }
 .cm-editor {
-    font-size: 13px;
+    font-size: 12px;
     border: 1px solid #ddd;
 }
 .widefat {
     width: 100%;
-    margin-bottom: 10px;
+}
+.workflow-footer {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
 }
