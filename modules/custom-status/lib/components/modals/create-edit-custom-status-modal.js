@@ -48,7 +48,11 @@ export default function CreateEditCustomStatusModal( {
 		requiredUsers.length > 0 ? 'specific' : 'all'
 	);
 
+<<<<<<< HEAD
 	let titleText = customStatus
+=======
+	let titleText = customStatus
+>>>>>>> trunk
 		? sprintf( __( 'Edit Step: "%s"', 'vip-workflow' ), customStatus.name )
 		: __( 'Add New Workflow Step', 'vip-workflow' );
 

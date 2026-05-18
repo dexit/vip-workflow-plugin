@@ -90,6 +90,8 @@ class APIWorkflow {
 				return self::extract_data( $config, $context );
 			case 'data_transformer':
 				return self::transform_data( $config, $context );
+			case 'data_ingestor':
+				return self::ingest_dto_to_cpt( $config, $context );
 			case 'despatch_config':
 				return self::send_webhook( $config, $context );
 		}
@@ -104,7 +106,6 @@ class APIWorkflow {
 	}
 
 	private static function validate_dto_schema( $config, &$context ) {
-		// Basic validation logic
 		$schema = json_decode( $config['schema'] ?? '{}', true );
 		$context['dto_schema'] = $schema;
 		return [ 'schema_loaded' => true ];
@@ -116,7 +117,7 @@ class APIWorkflow {
 
 		if ( $source === 'post' ) {
 			$post_id = self::parse_template( $extractor_config['post_id'] ?? '{{request.post_id}}', $context );
-			$post = get_post( $post_id );
+			$post = get_post( absint($post_id) );
 			if ( ! $post ) return [ 'error' => 'Post not found' ];
 
 			$extracted = [
@@ -125,7 +126,7 @@ class APIWorkflow {
 				'meta'         => []
 			];
 			foreach ( ($extractor_config['meta_keys'] ?? []) as $key ) {
-				$extracted['meta'][$key] = get_post_meta( $post_id, $key, true );
+				$extracted['meta'][$key] = get_post_meta( $post->ID, $key, true );
 			}
 			return $extracted;
 		}
@@ -135,16 +136,24 @@ class APIWorkflow {
 	private static function transform_data( $config, &$context ) {
 		$mapping = json_decode( $config['mapping'] ?? '{}', true );
 		$transformed = self::parse_template( $mapping, $context );
-
-		// Update DTO in context
 		$context['dto'] = array_merge( $context['dto'], $transformed );
 		return $transformed;
+	}
+
+	private static function ingest_dto_to_cpt( $config, $context ) {
+		$post_type = $config['post_type'] ?? 'post';
+		$mapping = json_decode( $config['mapping'] ?? '{}', true );
+
+		$post_data = self::parse_template( $mapping, $context );
+		$post_id = wp_insert_post( array_merge( [ 'post_type' => $post_type, 'post_status' => 'publish' ], $post_data ) );
+
+		return [ 'post_id' => $post_id ];
 	}
 
 	private static function send_webhook( $config, $context ) {
 		$url = self::parse_template( $config['url'] ?? '', $context );
 		$headers = self::parse_template( $config['headers'] ?? [], $context );
-		$body = $context['dto']; // By default, send the transformed DTO
+		$body = $context['dto'];
 
 		$response = wp_remote_request( $url, [
 			'method'  => $config['method'] ?? 'POST',
@@ -158,7 +167,7 @@ class APIWorkflow {
 		];
 	}
 
-	private static function parse_template( $data, $context ) {
+	public static function parse_template( $data, $context ) {
 		if ( is_array( $data ) ) {
 			foreach ( $data as $key => $value ) {
 				$data[ $key ] = self::parse_template( $value, $context );
