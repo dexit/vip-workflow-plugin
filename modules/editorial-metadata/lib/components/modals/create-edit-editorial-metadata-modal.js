@@ -1,230 +1,172 @@
-import apiFetch from '@wordpress/api-fetch';
-<<<<<<< HEAD
-import { Button, Modal, SelectControl, TextControl, TextareaControl, Flex, FlexItem, __experimentalHeading as Heading } from '@wordpress/components';
-=======
-import { Button, Modal, SelectControl, TextControl, TextareaControl, Panel, PanelBody } from '@wordpress/components';
->>>>>>> trunk
+import { Modal, TextControl, SelectControl, Button, TextareaControl } from '@wordpress/components';
 import { useState, useEffect } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import apiFetch from '@wordpress/api-fetch';
 
-import ErrorNotice from '../../../../shared/js/components/error-notice';
+const CreateEditEditorialMetadataModal = ( { isOpen, onRequestClose, onSave, editorialMetadata = {} } ) => {
+	const [ name, setName ] = useState( editorialMetadata.name || '' );
+	const [ description, setDescription ] = useState( editorialMetadata.description || '' );
+	const [ type, setType ] = useState( ( editorialMetadata.meta && editorialMetadata.meta.type ) || 'text' );
+	const [ config, setConfig ] = useState( ( editorialMetadata.meta && editorialMetadata.meta.config ) || {} );
+	const [ workflows, setWorkflows ] = useState( [] );
 
-export default function CreateEditEditorialMetadataModal( {
-	availableMetadataTypes,
-	metadata,
-	onCancel,
-	onSuccess,
-} ) {
-	const [ error, setError ] = useState( null );
-	const [ name, setName ] = useState( metadata?.name || '' );
-	const [ description, setDescription ] = useState( metadata?.description || '' );
-	const [ type, setType ] = useState( metadata?.meta?.type || availableMetadataTypes[ 0 ].value );
-	const [ config, setConfig ] = useState( metadata?.meta?.config || {} );
-	const [ isRequesting, setIsRequesting ] = useState( false );
+	useEffect( () => {
+		setName( editorialMetadata.name || '' );
+		setDescription( editorialMetadata.description || '' );
+		setType( ( editorialMetadata.meta && editorialMetadata.meta.type ) || 'text' );
+		setConfig( ( editorialMetadata.meta && editorialMetadata.meta.config ) || {} );
 
-	useEffect(() => {
-		if (metadata?.meta?.config) {
-			setConfig(metadata.meta.config);
-		}
-	}, [metadata]);
+		apiFetch( { path: '/vw-custom-status/v1/statuses' } ).then( setWorkflows ).catch( console.error );
+	}, [ editorialMetadata ] );
 
-<<<<<<< HEAD
-	let titleText = metadata
-		? sprintf( __( 'Edit Component: "%s"', 'vip-workflow' ), metadata.name )
-		: __( 'Add New API Component', 'vip-workflow' );
-
-	const handleSave = async () => {
-		const data = { name, description, type, config };
-=======
-	let titleText;
-	if ( metadata ) {
-		titleText = sprintf( __( 'Edit Component: "%s"', 'vip-workflow' ), metadata.name );
-	} else {
-		titleText = __( 'Add New API Component', 'vip-workflow' );
-	}
-
-	const handleSave = async () => {
-		const data = {
+	const handleSave = () => {
+		onSave( {
+			term_id: editorialMetadata.term_id,
 			name,
 			description,
 			type,
 			config,
-		};
-
->>>>>>> trunk
-		try {
-			setIsRequesting( true );
-			const result = await apiFetch( {
-				url: VW_EDITORIAL_METADATA_CONFIGURE.url_edit_editorial_metadata + ( metadata ? metadata.term_id : '' ),
-				method: metadata ? 'PUT' : 'POST',
-				data,
-			} );
-			onSuccess(
-				metadata
-					? sprintf( __( 'Component "%s" updated successfully.', 'vip-workflow' ), name )
-					: sprintf( __( 'Component "%s" added successfully.', 'vip-workflow' ), name ),
-				result
-			);
-		} catch ( error ) {
-			setError( error.message );
-		}
-		setIsRequesting( false );
+		} );
 	};
 
-	const updateConfig = (key, value) => {
-		setConfig({ ...config, [key]: value });
+	const updateConfig = ( key, value ) => {
+		setConfig( ( prev ) => ( { ...prev, [ key ]: value } ) );
+	};
+
+	const handleJsonConfigChange = ( key, value ) => {
+		try {
+			const parsed = JSON.parse( value );
+			updateConfig( key, parsed );
+		} catch ( e ) {
+			updateConfig( key + '_raw', value );
+		}
 	};
 
 	return (
 		<Modal
-			title={ titleText }
-			size="large"
-			onRequestClose={ onCancel }
-			closeButtonLabel={ __( 'Cancel', 'vip-workflow' ) }
+			title={ editorialMetadata.term_id ? 'Edit Component' : 'Create Component' }
+			onRequestClose={ onRequestClose }
 		>
-			{ error && <ErrorNotice errorMessage={ error } setError={ setError } /> }
-			<Flex direction="row" align="start">
-<<<<<<< HEAD
-				<FlexItem style={{ width: '35%', paddingRight: '20px', borderRight: '1px solid #ddd' }}>
-					<TextControl label={ __( 'Name', 'vip-workflow' ) } onChange={ setName } value={ name } />
-					<TextareaControl label={ __( 'Description', 'vip-workflow' ) } onChange={ setDescription } value={ description } />
-=======
-				<FlexItem style={{ width: '40%', paddingRight: '20px', borderRight: '1px solid #ddd' }}>
+			<div style={ { minWidth: '400px' } }>
+				<TextControl
+					label="Name"
+					value={ name }
+					onChange={ setName }
+				/>
+				<TextareaControl
+					label="Description"
+					value={ description }
+					onChange={ setDescription }
+				/>
+
+				<SelectControl
+					label="Assign to Workflow"
+					value={ config.workflow_id || '' }
+					options={ [
+						{ label: '-- Select Workflow --', value: '' },
+						...workflows.map( w => ( { label: w.name, value: w.term_id } ) )
+					] }
+					onChange={ ( val ) => updateConfig( 'workflow_id', val ) }
+				/>
+
+				<SelectControl
+					label="Type"
+					value={ type }
+					options={ [
+						{ label: 'PHP Callback', value: 'php_callback' },
+						{ label: 'Data Extractor (DTO)', value: 'data_extractor' },
+						{ label: 'Data Transformer', value: 'data_transformer' },
+						{ label: 'Data Ingestor (CPT)', value: 'data_ingestor' },
+						{ label: 'Despatch Config (Webhook)', value: 'despatch_config' },
+						{ label: 'Text Field', value: 'text' },
+						{ label: 'Checkbox', value: 'checkbox' },
+					] }
+					onChange={ setType }
+				/>
+
+				{ type === 'php_callback' && (
 					<TextControl
-						label={ __( 'Name', 'vip-workflow' ) }
-						onChange={ setName }
-						value={ name }
+						label="Function Name"
+						value={ config.function_name || '' }
+						onChange={ ( val ) => updateConfig( 'function_name', val ) }
 					/>
+				) }
+
+				{ type === 'data_extractor' && (
 					<TextareaControl
-						label={ __( 'Description', 'vip-workflow' ) }
-						onChange={ setDescription }
-						value={ description }
+						label="Mapping (JSON)"
+						help="Example: { 'dto_key': 'request.body.path.to.val' }"
+						value={ JSON.stringify( config.mapping || {}, null, 2 ) }
+						onChange={ ( val ) => handleJsonConfigChange( 'mapping', val ) }
 					/>
->>>>>>> trunk
-					<SelectControl
-						label={ __( 'Component Type', 'vip-workflow' ) }
-						value={ type }
-						options={ availableMetadataTypes }
-						onChange={ setType }
-						disabled={ metadata !== null }
+				) }
+
+				{ type === 'data_transformer' && (
+					<TextareaControl
+						label="Rules (JSON)"
+						help="Example: { 'dto_key': 'uppercase' }"
+						value={ JSON.stringify( config.rules || {}, null, 2 ) }
+						onChange={ ( val ) => handleJsonConfigChange( 'rules', val ) }
 					/>
-				</FlexItem>
-<<<<<<< HEAD
-				<FlexItem style={{ width: '65%', paddingLeft: '20px' }}>
-					<Heading level={4}>{ __( 'Configuration', 'vip-workflow' ) }</Heading>
+				) }
 
-=======
-				<FlexItem style={{ width: '60%', paddingLeft: '20px' }}>
-					<Heading level={4}>{ __( 'Configuration', 'vip-workflow' ) }</Heading>
-
->>>>>>> trunk
-					{ type === 'php_callback' && (
+				{ type === 'data_ingestor' && (
+					<>
 						<TextControl
-							label={ __( 'PHP Function Name', 'vip-workflow' ) }
-							value={ config.function_name || '' }
-							onChange={ (val) => updateConfig('function_name', val) }
-<<<<<<< HEAD
+							label="Post Type"
+							value={ config.post_type || 'post' }
+							onChange={ ( val ) => updateConfig( 'post_type', val ) }
 						/>
-					)}
-
-					{ type === 'dto_schema' && (
 						<TextareaControl
-							label={ __( 'DTO Schema (JSON Schema)', 'vip-workflow' ) }
-							value={ config.schema || '' }
-							onChange={ (val) => updateConfig('schema', val) }
-							help={ __( 'Define the structure and validation for the data object.', 'vip-workflow' ) }
-							rows={ 12 }
+							label="Field Mapping (JSON)"
+							help="Example: { 'post_title': 'dto_key' }"
+							value={ JSON.stringify( config.field_mapping || {}, null, 2 ) }
+							onChange={ ( val ) => handleJsonConfigChange( 'field_mapping', val ) }
 						/>
-					)}
-
-					{ type === 'data_extractor' && (
-						<>
-							<SelectControl
-								label={ __( 'Source Type', 'vip-workflow' ) }
-								value={ config.source_type || 'post' }
-								options={[
-									{ label: 'WordPress Post/Meta', value: 'post' },
-									{ label: 'External API', value: 'external' }
-								]}
-								onChange={ (val) => updateConfig('source_type', val) }
-							/>
-							<TextareaControl
-								label={ __( 'Extractor Config (JSON)', 'vip-workflow' ) }
-								value={ config.extractor_config || '' }
-								onChange={ (val) => updateConfig('extractor_config', val) }
-								help={ __( 'Define keys to extract.', 'vip-workflow' ) }
-								rows={ 8 }
-							/>
-						</>
-					)}
-
-					{ type === 'data_transformer' && (
 						<TextareaControl
-							label={ __( 'Transformation Mapping (JSON)', 'vip-workflow' ) }
-							value={ config.mapping || '' }
-							onChange={ (val) => updateConfig('mapping', val) }
-							help={ __( 'Map source fields to DTO fields using template tags.', 'vip-workflow' ) }
-							rows={ 12 }
-=======
-							help={ __( 'The name of a PHP function or static method to call.', 'vip-workflow' ) }
+							label="Meta Mapping (JSON)"
+							help="Example: { '_custom_meta': 'dto_key' }"
+							value={ JSON.stringify( config.meta_mapping || {}, null, 2 ) }
+							onChange={ ( val ) => handleJsonConfigChange( 'meta_mapping', val ) }
 						/>
-					)}
+					</>
+				) }
 
-					{ type === 'data_mapping' && (
+				{ type === 'despatch_config' && (
+					<>
+						<TextControl
+							label="Webhook URL"
+							value={ config.url || '' }
+							onChange={ ( val ) => updateConfig( 'url', val ) }
+						/>
+						<SelectControl
+							label="Method"
+							value={ config.method || 'POST' }
+							options={ [
+								{ label: 'POST', value: 'POST' },
+								{ label: 'GET', value: 'GET' },
+								{ label: 'PUT', value: 'PUT' },
+							] }
+							onChange={ ( val ) => updateConfig( 'method', val ) }
+						/>
 						<TextareaControl
-							label={ __( 'Mapping Logic (JSON)', 'vip-workflow' ) }
-							value={ config.mapping || '' }
-							onChange={ (val) => updateConfig('mapping', val) }
-							help={ __( 'Define how data is transformed.', 'vip-workflow' ) }
-							rows={ 10 }
->>>>>>> trunk
+							label="Body Mapping (JSON)"
+							value={ JSON.stringify( config.body_mapping || {}, null, 2 ) }
+							onChange={ ( val ) => handleJsonConfigChange( 'body_mapping', val ) }
 						/>
-					)}
+					</>
+				) }
 
-					{ type === 'despatch_config' && (
-						<>
-							<TextControl
-								label={ __( 'Webhook URL', 'vip-workflow' ) }
-								value={ config.url || '' }
-								onChange={ (val) => updateConfig('url', val) }
-							/>
-							<SelectControl
-								label={ __( 'Method', 'vip-workflow' ) }
-								value={ config.method || 'POST' }
-<<<<<<< HEAD
-								options={[{ label: 'POST', value: 'POST' }, { label: 'GET', value: 'GET' }, { label: 'PUT', value: 'PUT' }]}
-=======
-								options={[
-									{ label: 'POST', value: 'POST' },
-									{ label: 'GET', value: 'GET' },
-									{ label: 'PUT', value: 'PUT' },
-								]}
->>>>>>> trunk
-								onChange={ (val) => updateConfig('method', val) }
-							/>
-							<TextareaControl
-								label={ __( 'Headers (JSON)', 'vip-workflow' ) }
-								value={ config.headers || '' }
-								onChange={ (val) => updateConfig('headers', val) }
-<<<<<<< HEAD
-								rows={ 4 }
-=======
-								rows={ 5 }
->>>>>>> trunk
-							/>
-						</>
-					)}
-
-					{ (type === 'text' || type === 'date' || type === 'checkbox') && (
-						<p>{ __( 'Standard metadata field. No extra configuration needed.', 'vip-workflow' ) }</p>
-					)}
-				</FlexItem>
-			</Flex>
-			<div style={{ marginTop: '20px', textAlign: 'right' }}>
-				<Button variant="primary" onClick={ handleSave } disabled={ isRequesting }>
-					{ metadata ? __( 'Update Component', 'vip-workflow' ) : __( 'Save Component', 'vip-workflow' ) }
-				</Button>
+				<div style={ { marginTop: '20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' } }>
+					<Button isSecondary onClick={ onRequestClose }>
+						Cancel
+					</Button>
+					<Button isPrimary onClick={ handleSave }>
+						Save
+					</Button>
+				</div>
 			</div>
 		</Modal>
 	);
-}
+};
+
+export default CreateEditEditorialMetadataModal;

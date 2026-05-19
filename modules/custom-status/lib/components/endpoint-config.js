@@ -1,90 +1,61 @@
 import { useState } from '@wordpress/element';
-<<<<<<< HEAD
 import {
     Panel,
     PanelBody,
     PanelRow,
     TextControl,
-    SelectControl,
-    Flex,
-=======
-import {
-    Panel,
-    PanelBody,
-    PanelRow,
-    TextControl,
-    SelectControl,
-    Flex,
->>>>>>> trunk
-    FlexItem,
-    Button
+    SelectControl
 } from '@wordpress/components';
-import { __ } from '@wordpress/i18n';
-import apiFetch from '@wordpress/api-fetch';
 
-export default function EndpointConfig() {
-    const [ config, setConfig ] = useState( window.VW_CUSTOM_STATUS_CONFIGURE.api_config || {
-        path: '/my-workflow-api',
-        method: 'POST',
-        api_key: ''
-    } );
-    const [ isSaving, setIsSaving ] = useState( false );
-
-    const handleSave = async () => {
-        setIsSaving( true );
-        try {
-            await apiFetch( {
-                path: '/vip-workflow/v1/api-config',
-                method: 'POST',
-                data: config
-            } );
-            alert( __( 'Configuration saved', 'vip-workflow' ) );
-        } catch ( err ) {
-            alert( err.message );
-        }
-        setIsSaving( false );
-    };
-
+const EndpointConfig = ({ config, onUpdate }) => {
     return (
         <Panel>
-            <PanelBody title={ __( 'Global API Endpoint Configuration', 'vip-workflow' ) } initialOpen={ true }>
+            <PanelBody title="REST API Endpoint Settings" initialOpen={ true }>
                 <PanelRow>
-                    <Flex align="start" style={{ width: '100%' }}>
-                        <FlexItem isBlock>
-                            <TextControl
-                                label={ __( 'Endpoint Path', 'vip-workflow' ) }
-                                value={ config.path }
-                                onChange={ ( val ) => setConfig( { ...config, path: val } ) }
-                                help={ __( 'Path relative to /wp-json/vw-api/v1', 'vip-workflow' ) }
-                            />
-                        </FlexItem>
-                        <FlexItem>
-                            <SelectControl
-                                label={ __( 'Method', 'vip-workflow' ) }
-                                value={ config.method }
-                                options={[
-                                    { label: 'POST', value: 'POST' },
-                                    { label: 'GET', value: 'GET' }
-                                ]}
-                                onChange={ ( val ) => setConfig( { ...config, method: val } ) }
-                            />
-                        </FlexItem>
-                        <FlexItem isBlock>
-                            <TextControl
-                                label={ __( 'API Key (Optional)', 'vip-workflow' ) }
-                                value={ config.api_key }
-                                onChange={ ( val ) => setConfig( { ...config, api_key: val } ) }
-                                help={ __( 'Required in X-VW-API-KEY header', 'vip-workflow' ) }
-                            />
-                        </FlexItem>
-                        <FlexItem style={{ alignSelf: 'center', marginTop: '10px' }}>
-                            <Button variant="primary" onClick={ handleSave } disabled={ isSaving }>
-                                { isSaving ? __( 'Saving...', 'vip-workflow' ) : __( 'Save API Config', 'vip-workflow' ) }
-                            </Button>
-                        </FlexItem>
-                    </Flex>
+                    <TextControl
+                        label="Endpoint Path"
+                        help="The URL path relative to /wp-json/vw-api/v1/"
+                        value={ config.api_path || '' }
+                        onChange={ (val) => onUpdate({ ...config, api_path: val }) }
+                    />
                 </PanelRow>
+                <PanelRow>
+                    <SelectControl
+                        label="HTTP Method"
+                        value={ config.api_method || 'POST' }
+                        options={[
+                            { label: 'POST', value: 'POST' },
+                            { label: 'GET', value: 'GET' },
+                            { label: 'PUT', value: 'PUT' },
+                            { label: 'DELETE', value: 'DELETE' },
+                        ]}
+                        onChange={ (val) => onUpdate({ ...config, api_method: val }) }
+                    />
+                </PanelRow>
+                <PanelRow>
+                    <SelectControl
+                        label="Authentication"
+                        value={ config.api_auth_type || 'none' }
+                        options={[
+                            { label: 'None (Public)', value: 'none' },
+                            { label: 'X-VW-API-KEY Header', value: 'api_key' },
+                            { label: 'Bearer Token', value: 'bearer' },
+                        ]}
+                        onChange={ (val) => onUpdate({ ...config, api_auth_type: val }) }
+                    />
+                </PanelRow>
+                { (config.api_auth_type === 'api_key' || config.api_auth_type === 'bearer') && (
+                    <PanelRow>
+                        <TextControl
+                            label="API Key / Token"
+                            value={ config.api_key || '' }
+                            onChange={ (val) => onUpdate({ ...config, api_key: val }) }
+                        />
+                    </PanelRow>
+                )}
             </PanelBody>
         </Panel>
     );
-}
+};
+
+export default EndpointConfig;

@@ -1,218 +1,175 @@
 <?php
-/**
- * Plugin Name: API Workflow Ingestion
- * Description: Advanced Workflow system with Ingestion, Digestion, Storage, and Dispatching.
- */
+namespace VIPWorkflow\Modules;
 
-if ( ! defined( 'ABSPATH' ) ) {
-	return;
-}
+use VIPWorkflow\Modules\Shared\PHP\HelperUtilities;
+use WP_REST_Request;
+use WP_REST_Response;
+use WP_Error;
 
-// Load dependencies
-require_once __DIR__ . '/rest/api-workflow-endpoint.php';
+class APIWorkflow {
+	const SETTINGS_SLUG = 'vw-api-manager';
 
-// Ensure Action Scheduler is loaded
-if ( file_exists( WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php' ) ) {
-    require_once WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php';
-}
-
-add_action( 'init', 'vw_api_init_core' );
-add_action( 'rest_api_init', 'vw_api_register_dynamic_routes' );
-add_action( 'init', 'vw_api_register_dynamic_hooks' );
-
-/**
- * Initialize core features
- */
-function vw_api_init_core() {
-    register_post_type( 'vw_workflow_log', array(
-        'labels' => array( 'name' => 'Workflow Logs' ),
-        'public' => false,
-        'show_ui' => true,
-        'supports' => array( 'title', 'editor', 'excerpt', 'custom-fields' ),
-        'menu_icon' => 'dashicons-list-view',
-    ) );
-}
-
-/**
- * Register dynamic routes
- */
-function vw_api_register_dynamic_routes() {
-	$config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
-	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
-
-	foreach ( $workflows as $workflow ) {
-		$entries = isset( $workflow['entries'] ) ? $workflow['entries'] : array();
-		foreach ( $entries as $entry ) {
-            if ( $entry['type'] !== 'rest' || empty($entry['route']) ) continue;
-            register_rest_route( 'vw-ingest/v1', '/' . ltrim( $entry['route'], '/' ), array(
-                'methods'             => isset( $entry['method'] ) ? $entry['method'] : 'POST',
-                'callback'            => function( $request ) use ( $workflow ) {
-                    return vw_api_handle_workflow_request( $workflow, $request );
-                },
-                'permission_callback' => '__return_true',
-            ) );
-        }
+	public static function init(): void {
+		add_action( 'init', [ __CLASS__, 'register_api_endpoints' ], 20 );
+		add_action( 'admin_menu', [ __CLASS__, 'add_admin_menu' ] );
+		add_action( 'admin_enqueue_scripts', [ __CLASS__, 'action_admin_enqueue_scripts' ] );
 	}
-}
 
-	public static function handle_request( $request ) {
-		$steps = CustomStatus::get_custom_statuses();
-		$context = [
-			'request' => $request->get_params(),
-			'headers' => $request->get_headers(),
+	public static function register_api_endpoints(): void {
+		if ( ! class_exists( 'VIPWorkflow\Modules\CustomStatus' ) ) return;
+		 = CustomStatus::get_custom_statuses();
+		foreach (  as  ) {
+			 = ->meta[ CustomStatus::STATUS_CONFIG_KEY ] ?? [];
+			if ( empty( ['api_path'] ) ) continue;
+
+			register_rest_route( 'vw-api/v1', ['api_path'], [
+				'methods'             => ['api_method'] ?? 'POST',
+				'callback'            => [ __CLASS__, 'handle_api_request' ],
+				'permission_callback' => [ __CLASS__, 'check_api_permission' ],
+				'args'                => [ 'workflow_id' => [ 'default' => ->term_id ] ]
+			]);
+		}
+	}
+
+	public static function check_api_permission( WP_REST_Request  ): bool {
+		 = ->get_param( 'workflow_id' );
+		      = get_term_meta( , CustomStatus::STATUS_CONFIG_KEY, true );
+
+		if ( empty( ['api_auth_type'] ) || ['api_auth_type'] === 'none' ) return true;
+
+		if ( ['api_auth_type'] === 'api_key' ) {
+			return ->get_header( 'X-VW-API-KEY' ) === ['api_key'];
+		}
+
+		if ( ['api_auth_type'] === 'bearer' ) {
+			 = ->get_header( 'Authorization' );
+			return  === 'Bearer ' . ['api_key'];
+		}
+
+		return false;
+	}
+
+	public static function handle_api_request( WP_REST_Request  ): WP_REST_Response|WP_Error {
+		 = ->get_param( 'workflow_id' );
+		    = CustomStatus::get_custom_status_by( 'id',  );
+		if ( !  ) return new WP_Error( 'invalid_workflow', 'Workflow not found', [ 'status' => 404 ] );
+
+		 = [
+			'request' => [
+				'body'    => ->get_json_params(),
+				'params'  => ->get_params(),
+				'headers' => ->get_headers(),
+			],
 			'steps'   => [],
 			'dto'     => [],
 		];
 
-		$results = [];
-		foreach ( $steps as $step ) {
-			$step_result = self::execute_step( $step, $context );
-			$results[] = [
-				'step' => $step->name,
-				'result' => $step_result
-			];
-			$context['steps'][ $step->slug ] = $step_result;
+		 = EditorialMetadata::get_editorial_metadata_terms();
+		foreach (  as  ) {
+			 = self::execute_component( ,  );
+			['steps'][ ->slug ] = ;
 		}
 
-		return rest_ensure_response( [
-			'success' => true,
-			'data'    => $results,
-			'dto'     => $context['dto']
-		] );
-	}
-}
-
-	private static function execute_step( $step, &$context ) {
-		$component_ids = $step->meta['required_metadata_ids'] ?? [];
-		$step_results = [];
-
-		foreach ( $component_ids as $component_id ) {
-			$component = EditorialMetadata::get_editorial_metadata_term_by( 'id', $component_id );
-			if ( $component ) {
-				$res = self::execute_component( $component, $context );
-				$step_results[ $component->slug ] = $res;
-			}
-		}
-
-		$result = vw_api_execute_step( $step, $context );
-        if ( is_array($result) && isset($result['__skip_workflow']) && $result['__skip_workflow'] ) {
-            $context['steps'][ $step['id'] ] = array( 'result' => $result, 'status' => 'stopped' );
-            break;
-        }
-		$context['steps'][ $step['id'] ] = array( 'result' => $result );
-		if ( is_wp_error( $result ) ) break;
+		return new WP_REST_Response( [ 'success' => true, 'context' =>  ], 200 );
 	}
 
-    vw_api_log_execution( $workflow, $context, microtime(true) - $execution_start );
-	return rest_ensure_response( array( 'success' => true, 'workflow_id' => $workflow_id, 'steps' => $context['steps'] ) );
-}
+	private static function execute_component( , & ) {
+		   = ->meta[ EditorialMetadata::METADATA_TYPE_KEY ];
+		 = ->meta[ EditorialMetadata::METADATA_CONFIG_KEY ];
 
-		switch ( $type ) {
-			case 'php_callback':
-				return self::run_php_callback( $config, $context );
-			case 'dto_schema':
-				return self::validate_dto_schema( $config, $context );
+		switch (  ) {
 			case 'data_extractor':
-				return self::extract_data( $config, $context );
+				 = [];
+				foreach ( (array) (['mapping'] ?? []) as  =>  ) {
+					[  ] = self::parse_template_tags( ,  );
+				}
+				['dto'] = array_merge( ['dto'],  );
+				return ;
+
 			case 'data_transformer':
-				return self::transform_data( $config, $context );
+				foreach ( (array) (['dto'] ?? []) as  =>  ) {
+					if ( isset( ['rules'][  ] ) ) {
+						 = ['rules'][  ];
+						if (  === 'uppercase' ) ['dto'][  ] = strtoupper(  );
+						if (  === 'lowercase' ) ['dto'][  ] = strtolower(  );
+					}
+				}
+				return ['dto'];
+
 			case 'data_ingestor':
-				return self::ingest_dto_to_cpt( $config, $context );
+				 = ['post_type'] ?? 'post';
+				 = [ 'post_type' => , 'post_status' => 'publish' ];
+				foreach ( (array) (['field_mapping'] ?? []) as  =>  ) {
+					 = ['dto'][  ] ?? '';
+					if ( in_array( , [ 'post_title', 'post_content', 'post_excerpt' ] ) ) {
+						[  ] = ;
+					}
+				}
+				 = wp_insert_post(  );
+				if ( ! is_wp_error(  ) ) {
+					foreach ( (array) (['meta_mapping'] ?? []) as  =>  ) {
+						 = ['dto'][  ] ?? '';
+						update_post_meta( , ,  );
+					}
+				}
+				return ;
+
 			case 'despatch_config':
-				return self::send_webhook( $config, $context );
+				  = self::parse_template_tags( ['url'] ?? '',  );
+				 = [];
+				foreach ( (array) (['body_mapping'] ?? []) as  =>  ) {
+					[  ] = self::parse_template_tags( ,  );
+				}
+				 = wp_remote_post( , [
+					'method'  => ['method'] ?? 'POST',
+					'headers' => ['headers'] ?? [],
+					'body'    => json_encode(  ),
+				]);
+				return is_wp_error(  ) ? ->get_error_message() : wp_remote_retrieve_body(  );
+
+			case 'php_callback':
+				if ( ! empty( ['function_name'] ) && is_callable( ['function_name'] ) ) {
+					return call_user_func( ['function_name'],  );
+				}
+				break;
 		}
 		return null;
 	}
 
-	private static function run_php_callback( $config, $context ) {
-		if ( ! empty( $config['function_name'] ) && is_callable( $config['function_name'] ) ) {
-			return call_user_func( $config['function_name'], $context );
-		}
-		return [ 'error' => 'Function not callable' ];
-	}
-
-	private static function validate_dto_schema( $config, &$context ) {
-		$schema = json_decode( $config['schema'] ?? '{}', true );
-		$context['dto_schema'] = $schema;
-		return [ 'schema_loaded' => true ];
-	}
-
-	private static function extract_data( $config, $context ) {
-		$source = $config['source_type'] ?? 'post';
-		$extractor_config = json_decode( $config['extractor_config'] ?? '{}', true );
-
-		if ( $source === 'post' ) {
-			$post_id = self::parse_template( $extractor_config['post_id'] ?? '{{request.post_id}}', $context );
-			$post = get_post( absint($post_id) );
-			if ( ! $post ) return [ 'error' => 'Post not found' ];
-
-			$extracted = [
-				'post_title'   => $post->post_title,
-				'post_content' => $post->post_content,
-				'meta'         => []
-			];
-			foreach ( ($extractor_config['meta_keys'] ?? []) as $key ) {
-				$extracted['meta'][$key] = get_post_meta( $post->ID, $key, true );
+	public static function parse_template_tags( ,  ) {
+		if ( ! is_string(  ) ) return ;
+		return preg_replace_callback( '/\{\{(.+?)\}\}/', function(  ) use (  ) {
+			 = explode( '.', trim( [1] ) );
+			  = ;
+			foreach (  as  ) {
+				if ( is_array(  ) && isset( [  ] ) ) {
+					 = [  ];
+				} elseif ( is_object(  ) && isset( -> ) ) {
+					 = ->;
+				} else {
+					return [0];
+				}
 			}
-			return $extracted;
-		}
-		return [ 'error' => 'Unsupported source' ];
+			return is_scalar(  ) ?  : json_encode(  );
+		},  );
 	}
 
-	private static function transform_data( $config, &$context ) {
-		$mapping = json_decode( $config['mapping'] ?? '{}', true );
-		$transformed = self::parse_template( $mapping, $context );
-		$context['dto'] = array_merge( $context['dto'], $transformed );
-		return $transformed;
+	public static function add_admin_menu(): void {
+		add_submenu_page( CustomStatus::SETTINGS_SLUG, 'API Manager', 'API Manager', 'manage_options', self::SETTINGS_SLUG, [ __CLASS__, 'render_admin_view' ] );
 	}
 
-	private static function ingest_dto_to_cpt( $config, $context ) {
-		$post_type = $config['post_type'] ?? 'post';
-		$mapping = json_decode( $config['mapping'] ?? '{}', true );
-
-		$post_data = self::parse_template( $mapping, $context );
-		$post_id = wp_insert_post( array_merge( [ 'post_type' => $post_type, 'post_status' => 'publish' ], $post_data ) );
-
-		return [ 'post_id' => $post_id ];
+	public static function render_admin_view(): void {
+		include_once VIP_WORKFLOW_ROOT . '/modules/api-workflow/views/manage-api-workflow.php';
 	}
 
-	private static function send_webhook( $config, $context ) {
-		$url = self::parse_template( $config['url'] ?? '', $context );
-		$headers = self::parse_template( $config['headers'] ?? [], $context );
-		$body = $context['dto'];
-
-		$response = wp_remote_request( $url, [
-			'method'  => $config['method'] ?? 'POST',
-			'body'    => wp_json_encode( $body ),
-			'headers' => array_merge( [ 'Content-Type' => 'application/json' ], (array)$headers ),
-		] );
-
-		return is_wp_error( $response ) ? [ 'error' => $response->get_error_message() ] : [
-			'status' => wp_remote_retrieve_response_code( $response ),
-			'body'   => wp_remote_retrieve_body( $response ),
-		];
-	}
-	return $result;
-}
-
-	public static function parse_template( $data, $context ) {
-		if ( is_array( $data ) ) {
-			foreach ( $data as $key => $value ) {
-				$data[ $key ] = self::parse_template( $value, $context );
-			}
-			return $data;
-		}
-		if ( is_string( $data ) && ( strpos( $data, '{' ) === 0 || strpos( $data, '[' ) === 0 ) ) {
-			$decoded = json_decode( $data, true );
-			if ( json_last_error() === JSON_ERROR_NONE ) {
-				return self::parse_template( $decoded, $context );
+	public static function action_admin_enqueue_scripts(): void {
+		if ( HelperUtilities::is_settings_view_loaded( self::SETTINGS_SLUG ) ) {
+			 = VIP_WORKFLOW_ROOT . '/dist/modules/api-workflow/api-workflow.asset.php';
+			if ( file_exists(  ) ) {
+				 = include ;
+				wp_enqueue_script( 'vw-api-manager-js', VIP_WORKFLOW_URL . 'dist/modules/api-workflow/api-workflow.js', ['dependencies'], ['version'], true );
 			}
 		}
-		if ( ! is_string( $data ) ) return $data;
-
-function vw_api_parse_template_array( $array, $context ) {
-	if ( ! is_array( $array ) ) return vw_api_parse_template( $array, $context );
-	foreach ( $array as $key => $value ) { $array[ $key ] = vw_api_parse_template_array( $value, $context ); }
-	return $array;
+	}
 }
 APIWorkflow::init();

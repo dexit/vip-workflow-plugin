@@ -14,3 +14,13 @@ artifacts/
 *.hot-update.js
 *.hot-update.json
 wp-content/
+wp-content/
+node_modules/
+*.txt
+dist/
+
+wp-content/
+node_modules/
+dist/
+*.txt
+*.log

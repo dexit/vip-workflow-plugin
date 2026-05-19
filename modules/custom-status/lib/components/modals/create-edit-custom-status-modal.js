@@ -1,118 +1,99 @@
-import apiFetch from '@wordpress/api-fetch';
-import {
-	Button,
-	__experimentalHStack as HStack,
-	Modal,
-	RadioControl,
-	__experimentalSpacer as Spacer,
-	TextControl,
-	TextareaControl,
-	Tooltip,
-} from '@wordpress/components';
-import { useState } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import { Modal, TextControl, SelectControl, Button, TextareaControl } from '@wordpress/components';
+import { useState, useEffect } from '@wordpress/element';
 
-import ErrorNotice from '../../../../shared/js/components/error-notice';
-import MetadataSelectFormTokenField from '../metadata-select-form-token-field';
-import UserSelectFormTokenField from '../user-select-form-token-field';
+const CreateEditCustomStatusModal = ( { isOpen, onRequestClose, onSave, status = {} } ) => {
+	const [ name, setName ] = useState( status.name || '' );
+	const [ description, setDescription ] = useState( status.description || '' );
+	const [ config, setConfig ] = useState( ( status.meta && status.meta.workflow_config ) || {} );
 
-export default function CreateEditCustomStatusModal( {
-	customStatus,
-	editorialMetadatas,
-	onCancel,
-	onSuccess,
-} ) {
-	const [ name, setName ] = useState( customStatus?.name || '' );
-	const [ description, setDescription ] = useState( customStatus?.description || '' );
-	const [ requiredUsers, setRequiredUsers ] = useState( customStatus?.meta?.required_users || [] );
-	const [ requiredMetadatas, setRequiredMetadatas ] = useState( () => {
-		if (
-			customStatus?.meta?.required_metadata_ids &&
-			customStatus?.meta?.required_metadata_ids.length > 0 &&
-			editorialMetadatas.length > 0
-		) {
-			return customStatus.meta.required_metadata_ids
-				.map( metadataId => {
-					return editorialMetadatas.find(
-						editorialMetadata => editorialMetadata.term_id === metadataId
-					);
-				} )
-				.filter( metadata => metadata );
-		}
-		return [];
-	} );
+	useEffect( () => {
+		setName( status.name || '' );
+		setDescription( status.description || '' );
+		setConfig( ( status.meta && status.meta.workflow_config ) || {} );
+	}, [ status ] );
 
-	const [ error, setError ] = useState( null );
-	const [ isRequesting, setIsRequesting ] = useState( false );
-	const [ areRestrictedUsersSet, setAreRestrictedUsersSet ] = useState(
-		requiredUsers.length > 0 ? 'specific' : 'all'
-	);
+	const handleSave = () => {
+		onSave( {
+			term_id: status.term_id,
+			name,
+			description,
+			config,
+		} );
+	};
 
-<<<<<<< HEAD
-	let titleText = customStatus
-=======
-	let titleText = customStatus
->>>>>>> trunk
-		? sprintf( __( 'Edit Step: "%s"', 'vip-workflow' ), customStatus.name )
-		: __( 'Add New Workflow Step', 'vip-workflow' );
-
-	const handleSave = async () => {
-		const data = { name, description };
-		if ( areRestrictedUsersSet === 'specific' ) {
-			data.required_user_ids = requiredUsers.map( user => user.id );
-		}
-		data.required_metadata_ids = requiredMetadatas.map( metadata => metadata.term_id );
-
-		try {
-			setIsRequesting( true );
-			const result = await apiFetch( {
-				url: VW_CUSTOM_STATUS_CONFIGURE.url_edit_status + ( customStatus ? customStatus.term_id : '' ),
-				method: customStatus ? 'PUT' : 'POST',
-				data,
-			} );
-			onSuccess(
-				customStatus
-					? sprintf( __( 'Step "%s" updated successfully.', 'vip-workflow' ), name )
-					: sprintf( __( 'Step "%s" added successfully.', 'vip-workflow' ), name ),
-				result
-			);
-		} catch ( error ) {
-			setError( error.message );
-		}
-		setIsRequesting( false );
+	const updateConfig = ( key, value ) => {
+		setConfig( ( prev ) => ( { ...prev, [ key ]: value } ) );
 	};
 
 	return (
 		<Modal
-			title={ titleText }
-			size="medium"
-			onRequestClose={ onCancel }
-			closeButtonLabel={ __( 'Cancel', 'vip-workflow' ) }
+			title={ status.term_id ? 'Edit Workflow' : 'Create Workflow' }
+			onRequestClose={ onRequestClose }
 		>
-			{ error && <ErrorNotice errorMessage={ error } setError={ setError } /> }
-			<TextControl
-				label={ __( 'Step Name', 'vip-workflow' ) }
-				onChange={ setName }
-				value={ name }
-			/>
-			<TextareaControl
-				label={ __( 'Step Description', 'vip-workflow' ) }
-				onChange={ setDescription }
-				value={ description }
-			/>
-			<Spacer />
-			<MetadataSelectFormTokenField
-				label={ __( 'Assigned Workflow Components', 'vip-workflow' ) }
-				editorialMetadatas={ editorialMetadatas }
-				requiredMetadatas={ requiredMetadatas }
-				onMetadatasChanged={ setRequiredMetadatas }
-			/>
-			<Spacer />
-			<HStack justify="right" style={ { marginTop: '16px' } }>
-				<Button variant="primary" onClick={ handleSave } disabled={ isRequesting }>
-					{ customStatus ? __( 'Update Step', 'vip-workflow' ) : __( 'Save Step', 'vip-workflow' ) }
-				</Button>
-			</HStack>
+			<div style={ { minWidth: '400px' } }>
+				<TextControl
+					label="Workflow Name"
+					value={ name }
+					onChange={ setName }
+				/>
+				<TextareaControl
+					label="Workflow Description"
+					value={ description }
+					onChange={ setDescription }
+				/>
+
+				<header style={ { marginTop: '20px', borderBottom: '1px solid #ddd', paddingBottom: '5px', marginBottom: '15px' } }>
+					<strong>API Endpoint Settings</strong>
+				</header>
+
+				<TextControl
+					label="API Path"
+					help="Registered under /wp-json/vw-api/v1/"
+					value={ config.api_path || '' }
+					onChange={ ( val ) => updateConfig( 'api_path', val ) }
+				/>
+
+				<SelectControl
+					label="HTTP Method"
+					value={ config.api_method || 'POST' }
+					options={ [
+						{ label: 'POST', value: 'POST' },
+						{ label: 'GET', value: 'GET' },
+						{ label: 'PUT', value: 'PUT' },
+					] }
+					onChange={ ( val ) => updateConfig( 'api_method', val ) }
+				/>
+
+				<SelectControl
+					label="Auth Type"
+					value={ config.api_auth_type || 'none' }
+					options={ [
+						{ label: 'None (Public)', value: 'none' },
+						{ label: 'X-VW-API-KEY Header', value: 'api_key' },
+						{ label: 'Bearer Token', value: 'bearer' },
+					] }
+					onChange={ ( val ) => updateConfig( 'api_auth_type', val ) }
+				/>
+
+				{ ( config.api_auth_type === 'api_key' || config.api_auth_type === 'bearer' ) && (
+					<TextControl
+						label="API Key / Token"
+						value={ config.api_key || '' }
+						onChange={ ( val ) => updateConfig( 'api_key', val ) }
+					/>
+				) }
+
+				<div style={ { marginTop: '20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' } }>
+					<Button isSecondary onClick={ onRequestClose }>
+						Cancel
+					</Button>
+					<Button isPrimary onClick={ handleSave }>
+						Save
+					</Button>
+				</div>
+			</div>
 		</Modal>
 	);
-}
+};
+
+export default CreateEditCustomStatusModal;
