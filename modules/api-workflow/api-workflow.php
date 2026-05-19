@@ -1,40 +1,59 @@
 <?php
 /**
- * class APIWorkflow
- * Manage custom REST API endpoints and workflows using Steps (Statuses) and Components (Metadata).
+ * Plugin Name: API Workflow Ingestion
+ * Description: Advanced Workflow system with Ingestion, Digestion, Storage, and Dispatching.
  */
 
-namespace VIPWorkflow\Modules;
+if ( ! defined( 'ABSPATH' ) ) {
+	return;
+}
 
+// Load dependencies
 require_once __DIR__ . '/rest/api-workflow-endpoint.php';
 
-use VIPWorkflow\Modules\CustomStatus;
-use VIPWorkflow\Modules\EditorialMetadata;
+// Ensure Action Scheduler is loaded
+if ( file_exists( WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php' ) ) {
+    require_once WP_CONTENT_DIR . '/plugins/action-scheduler/action-scheduler.php';
+}
 
-class APIWorkflow {
+add_action( 'init', 'vw_api_init_core' );
+add_action( 'rest_api_init', 'vw_api_register_dynamic_routes' );
+add_action( 'init', 'vw_api_register_dynamic_hooks' );
 
-	public static function init(): void {
-		add_action( 'rest_api_init', [ __CLASS__, 'register_dynamic_routes' ] );
+/**
+ * Initialize core features
+ */
+function vw_api_init_core() {
+    register_post_type( 'vw_workflow_log', array(
+        'labels' => array( 'name' => 'Workflow Logs' ),
+        'public' => false,
+        'show_ui' => true,
+        'supports' => array( 'title', 'editor', 'excerpt', 'custom-fields' ),
+        'menu_icon' => 'dashicons-list-view',
+    ) );
+}
+
+/**
+ * Register dynamic routes
+ */
+function vw_api_register_dynamic_routes() {
+	$config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
+	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
+
+	foreach ( $workflows as $workflow ) {
+		$entries = isset( $workflow['entries'] ) ? $workflow['entries'] : array();
+		foreach ( $entries as $entry ) {
+            if ( $entry['type'] !== 'rest' || empty($entry['route']) ) continue;
+            register_rest_route( 'vw-ingest/v1', '/' . ltrim( $entry['route'], '/' ), array(
+                'methods'             => isset( $entry['method'] ) ? $entry['method'] : 'POST',
+                'callback'            => function( $request ) use ( $workflow ) {
+                    return vw_api_handle_workflow_request( $workflow, $request );
+                },
+                'permission_callback' => '__return_true',
+            ) );
+        }
 	}
-
-	public static function register_dynamic_routes(): void {
-		$config = get_option( 'vw_api_endpoint_config' );
-		if ( empty( $config ) || empty( $config['path'] ) ) {
-			return;
-		}
-
-		register_rest_route( 'vw-api/v1', $config['path'], [
-			'methods'             => $config['method'] ?? 'POST',
-			'callback'            => [ __CLASS__, 'handle_request' ],
-			'permission_callback' => function () use ( $config ) {
-				if ( ! empty( $config['api_key'] ) ) {
-					$header_key = $_SERVER['HTTP_X_VW_API_KEY'] ?? '';
-					return $header_key === $config['api_key'];
-				}
-				return true;
-			},
-		] );
-	}
+}
 
 	public static function handle_request( $request ) {
 		$steps = CustomStatus::get_custom_statuses();
@@ -61,6 +80,7 @@ class APIWorkflow {
 			'dto'     => $context['dto']
 		] );
 	}
+}
 
 	private static function execute_step( $step, &$context ) {
 		$component_ids = $step->meta['required_metadata_ids'] ?? [];
@@ -74,12 +94,18 @@ class APIWorkflow {
 			}
 		}
 
-		return $step_results;
+		$result = vw_api_execute_step( $step, $context );
+        if ( is_array($result) && isset($result['__skip_workflow']) && $result['__skip_workflow'] ) {
+            $context['steps'][ $step['id'] ] = array( 'result' => $result, 'status' => 'stopped' );
+            break;
+        }
+		$context['steps'][ $step['id'] ] = array( 'result' => $result );
+		if ( is_wp_error( $result ) ) break;
 	}
 
-	private static function execute_component( $component, &$context ) {
-		$type = $component->meta['type'];
-		$config = $component->meta['config'];
+    vw_api_log_execution( $workflow, $context, microtime(true) - $execution_start );
+	return rest_ensure_response( array( 'success' => true, 'workflow_id' => $workflow_id, 'steps' => $context['steps'] ) );
+}
 
 		switch ( $type ) {
 			case 'php_callback':
@@ -166,6 +192,8 @@ class APIWorkflow {
 			'body'   => wp_remote_retrieve_body( $response ),
 		];
 	}
+	return $result;
+}
 
 	public static function parse_template( $data, $context ) {
 		if ( is_array( $data ) ) {
@@ -182,20 +210,9 @@ class APIWorkflow {
 		}
 		if ( ! is_string( $data ) ) return $data;
 
-		return preg_replace_callback( '/{{(.*?)}}/', function ( $matches ) use ( $context ) {
-			$path = explode( '.', trim( $matches[1] ) );
-			$value = $context;
-			foreach ( $path as $segment ) {
-				if ( is_array( $value ) && isset( $value[ $segment ] ) ) {
-					$value = $value[ $segment ];
-				} elseif ( is_object( $value ) && isset( $value->$segment ) ) {
-					$value = $value->$segment;
-				} else {
-					return $matches[0];
-				}
-			}
-			return is_scalar( $value ) ? $value : json_encode( $value );
-		}, $data );
-	}
+function vw_api_parse_template_array( $array, $context ) {
+	if ( ! is_array( $array ) ) return vw_api_parse_template( $array, $context );
+	foreach ( $array as $key => $value ) { $array[ $key ] = vw_api_parse_template_array( $value, $context ); }
+	return $array;
 }
 APIWorkflow::init();

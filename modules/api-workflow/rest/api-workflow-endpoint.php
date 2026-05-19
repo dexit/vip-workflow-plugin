@@ -1,5 +1,4 @@
 <?php
-<<<<<<< HEAD
 namespace VIPWorkflow\Modules\APIWorkflow\REST;
 use VIPWorkflow\Modules\APIWorkflow;
 use WP_REST_Request;
@@ -105,4 +104,3 @@ function vw_update_api_workflow_config( $request ) {
 
     return rest_ensure_response( array( 'success' => true ) );
 }
->>>>>>> trunk
