@@ -1,8 +1,4 @@
-import './api-workflow-manager.css';
-import React, { useState, useEffect } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
-import { php } from '@codemirror/lang-php';
-import { autocompletion } from '@codemirror/autocomplete';
+import { useState, useEffect } from '@wordpress/element';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
@@ -258,4 +254,85 @@ const APIWorkflowManager = () => {
   );
 };
 
+                                { step.type === 'ingest' && (
+                                    <>
+                                        <SelectControl
+                                            label={ __( 'Post Type', 'vip-workflow' ) }
+                                            value={ step.post_type }
+                                            options={[
+                                                { label: 'Post', value: 'post' },
+                                                { label: 'Page', value: 'page' }
+                                            ]}
+                                            onChange={ ( val ) => updateStep( index, { post_type: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Title Template', 'vip-workflow' ) }
+                                            value={ step.post_title }
+                                            onChange={ ( val ) => updateStep( index, { post_title: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Content Template', 'vip-workflow' ) }
+                                            value={ step.post_content }
+                                            onChange={ ( val ) => updateStep( index, { post_content: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Meta Data (JSON key:value pairs)', 'vip-workflow' ) }
+                                            value={ step.meta }
+                                            onChange={ ( val ) => updateStep( index, { meta: val } ) }
+                                        />
+                                    </>
+                                )}
+
+                                { step.type === 'php_action' && (
+                                    <TextControl
+                                        label={ __( 'PHP Callback Function', 'vip-workflow' ) }
+                                        value={ step.callback }
+                                        onChange={ ( val ) => updateStep( index, { callback: val } ) }
+                                        help={ __( 'Function signature: function($context) { ... }', 'vip-workflow' ) }
+                                    />
+                                )}
+
+                                { step.type === 'email' && (
+                                    <>
+                                        <TextControl
+                                            label={ __( 'To', 'vip-workflow' ) }
+                                            value={ step.to }
+                                            onChange={ ( val ) => updateStep( index, { to: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Subject', 'vip-workflow' ) }
+                                            value={ step.subject }
+                                            onChange={ ( val ) => updateStep( index, { subject: val } ) }
+                                        />
+                                        <TextControl
+                                            label={ __( 'Message', 'vip-workflow' ) }
+                                            value={ step.message }
+                                            onChange={ ( val ) => updateStep( index, { message: val } ) }
+                                        />
+                                    </>
+                                )}
+                            </Panel>
+                        ))}
+
+                        <Flex justify="center" style={{ marginTop: '20px' }}>
+                            <Button variant="secondary" onClick={ () => addStep('webhook') }>{ __( 'Add Webhook', 'vip-workflow' ) }</Button>
+                            <Button variant="secondary" onClick={ () => addStep('ingest') }>{ __( 'Add CPT Ingest', 'vip-workflow' ) }</Button>
+                            <Button variant="secondary" onClick={ () => addStep('php_action') }>{ __( 'Add PHP Action', 'vip-workflow' ) }</Button>
+                            <Button variant="secondary" onClick={ () => addStep('email') }>{ __( 'Add Email', 'vip-workflow' ) }</Button>
+                        </Flex>
+
+                        <Flex justify="flex-end" style={{ marginTop: '40px' }}>
+                            <Button variant="secondary" onClick={ () => setIsEditing( false ) } style={{ marginRight: '10px' }}>
+                                { __( 'Cancel', 'vip-workflow' ) }
+                            </Button>
+                            <Button variant="primary" onClick={ handleSave }>
+                                { __( 'Save Workflow', 'vip-workflow' ) }
+                            </Button>
+                        </Flex>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    );
+}
 export default APIWorkflowManager;

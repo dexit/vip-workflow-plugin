@@ -1,4 +1,5 @@
 import { useState } from '@wordpress/element';
+<<<<<<< HEAD
 import {
     Panel,
     PanelBody,
@@ -6,6 +7,15 @@ import {
     TextControl,
     SelectControl,
     Flex,
+=======
+import {
+    Panel,
+    PanelBody,
+    PanelRow,
+    TextControl,
+    SelectControl,
+    Flex,
+>>>>>>> trunk
     FlexItem,
     Button
 } from '@wordpress/components';

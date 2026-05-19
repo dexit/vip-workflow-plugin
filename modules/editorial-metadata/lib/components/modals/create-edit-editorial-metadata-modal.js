@@ -1,5 +1,9 @@
 import apiFetch from '@wordpress/api-fetch';
+<<<<<<< HEAD
+import { Button, Modal, SelectControl, TextControl, TextareaControl, Flex, FlexItem, __experimentalHeading as Heading } from '@wordpress/components';
+=======
 import { Button, Modal, SelectControl, TextControl, TextareaControl, Panel, PanelBody } from '@wordpress/components';
+>>>>>>> trunk
 import { useState, useEffect } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -24,6 +28,14 @@ export default function CreateEditEditorialMetadataModal( {
 		}
 	}, [metadata]);
 
+<<<<<<< HEAD
+	let titleText = metadata
+		? sprintf( __( 'Edit Component: "%s"', 'vip-workflow' ), metadata.name )
+		: __( 'Add New API Component', 'vip-workflow' );
+
+	const handleSave = async () => {
+		const data = { name, description, type, config };
+=======
 	let titleText;
 	if ( metadata ) {
 		titleText = sprintf( __( 'Edit Component: "%s"', 'vip-workflow' ), metadata.name );
@@ -39,16 +51,14 @@ export default function CreateEditEditorialMetadataModal( {
 			config,
 		};
 
+>>>>>>> trunk
 		try {
 			setIsRequesting( true );
 			const result = await apiFetch( {
-				url:
-					VW_EDITORIAL_METADATA_CONFIGURE.url_edit_editorial_metadata +
-					( metadata ? metadata.term_id : '' ),
+				url: VW_EDITORIAL_METADATA_CONFIGURE.url_edit_editorial_metadata + ( metadata ? metadata.term_id : '' ),
 				method: metadata ? 'PUT' : 'POST',
 				data,
 			} );
-
 			onSuccess(
 				metadata
 					? sprintf( __( 'Component "%s" updated successfully.', 'vip-workflow' ), name )
@@ -58,7 +68,6 @@ export default function CreateEditEditorialMetadataModal( {
 		} catch ( error ) {
 			setError( error.message );
 		}
-
 		setIsRequesting( false );
 	};
 
@@ -75,6 +84,11 @@ export default function CreateEditEditorialMetadataModal( {
 		>
 			{ error && <ErrorNotice errorMessage={ error } setError={ setError } /> }
 			<Flex direction="row" align="start">
+<<<<<<< HEAD
+				<FlexItem style={{ width: '35%', paddingRight: '20px', borderRight: '1px solid #ddd' }}>
+					<TextControl label={ __( 'Name', 'vip-workflow' ) } onChange={ setName } value={ name } />
+					<TextareaControl label={ __( 'Description', 'vip-workflow' ) } onChange={ setDescription } value={ description } />
+=======
 				<FlexItem style={{ width: '40%', paddingRight: '20px', borderRight: '1px solid #ddd' }}>
 					<TextControl
 						label={ __( 'Name', 'vip-workflow' ) }
@@ -86,6 +100,7 @@ export default function CreateEditEditorialMetadataModal( {
 						onChange={ setDescription }
 						value={ description }
 					/>
+>>>>>>> trunk
 					<SelectControl
 						label={ __( 'Component Type', 'vip-workflow' ) }
 						value={ type }
@@ -94,14 +109,63 @@ export default function CreateEditEditorialMetadataModal( {
 						disabled={ metadata !== null }
 					/>
 				</FlexItem>
+<<<<<<< HEAD
+				<FlexItem style={{ width: '65%', paddingLeft: '20px' }}>
+					<Heading level={4}>{ __( 'Configuration', 'vip-workflow' ) }</Heading>
+
+=======
 				<FlexItem style={{ width: '60%', paddingLeft: '20px' }}>
 					<Heading level={4}>{ __( 'Configuration', 'vip-workflow' ) }</Heading>
 
+>>>>>>> trunk
 					{ type === 'php_callback' && (
 						<TextControl
 							label={ __( 'PHP Function Name', 'vip-workflow' ) }
 							value={ config.function_name || '' }
 							onChange={ (val) => updateConfig('function_name', val) }
+<<<<<<< HEAD
+						/>
+					)}
+
+					{ type === 'dto_schema' && (
+						<TextareaControl
+							label={ __( 'DTO Schema (JSON Schema)', 'vip-workflow' ) }
+							value={ config.schema || '' }
+							onChange={ (val) => updateConfig('schema', val) }
+							help={ __( 'Define the structure and validation for the data object.', 'vip-workflow' ) }
+							rows={ 12 }
+						/>
+					)}
+
+					{ type === 'data_extractor' && (
+						<>
+							<SelectControl
+								label={ __( 'Source Type', 'vip-workflow' ) }
+								value={ config.source_type || 'post' }
+								options={[
+									{ label: 'WordPress Post/Meta', value: 'post' },
+									{ label: 'External API', value: 'external' }
+								]}
+								onChange={ (val) => updateConfig('source_type', val) }
+							/>
+							<TextareaControl
+								label={ __( 'Extractor Config (JSON)', 'vip-workflow' ) }
+								value={ config.extractor_config || '' }
+								onChange={ (val) => updateConfig('extractor_config', val) }
+								help={ __( 'Define keys to extract.', 'vip-workflow' ) }
+								rows={ 8 }
+							/>
+						</>
+					)}
+
+					{ type === 'data_transformer' && (
+						<TextareaControl
+							label={ __( 'Transformation Mapping (JSON)', 'vip-workflow' ) }
+							value={ config.mapping || '' }
+							onChange={ (val) => updateConfig('mapping', val) }
+							help={ __( 'Map source fields to DTO fields using template tags.', 'vip-workflow' ) }
+							rows={ 12 }
+=======
 							help={ __( 'The name of a PHP function or static method to call.', 'vip-workflow' ) }
 						/>
 					)}
@@ -113,6 +177,7 @@ export default function CreateEditEditorialMetadataModal( {
 							onChange={ (val) => updateConfig('mapping', val) }
 							help={ __( 'Define how data is transformed.', 'vip-workflow' ) }
 							rows={ 10 }
+>>>>>>> trunk
 						/>
 					)}
 
@@ -126,18 +191,26 @@ export default function CreateEditEditorialMetadataModal( {
 							<SelectControl
 								label={ __( 'Method', 'vip-workflow' ) }
 								value={ config.method || 'POST' }
+<<<<<<< HEAD
+								options={[{ label: 'POST', value: 'POST' }, { label: 'GET', value: 'GET' }, { label: 'PUT', value: 'PUT' }]}
+=======
 								options={[
 									{ label: 'POST', value: 'POST' },
 									{ label: 'GET', value: 'GET' },
 									{ label: 'PUT', value: 'PUT' },
 								]}
+>>>>>>> trunk
 								onChange={ (val) => updateConfig('method', val) }
 							/>
 							<TextareaControl
 								label={ __( 'Headers (JSON)', 'vip-workflow' ) }
 								value={ config.headers || '' }
 								onChange={ (val) => updateConfig('headers', val) }
+<<<<<<< HEAD
+								rows={ 4 }
+=======
 								rows={ 5 }
+>>>>>>> trunk
 							/>
 						</>
 					)}

@@ -55,50 +55,43 @@ function vw_api_register_dynamic_routes() {
 	}
 }
 
-/**
- * Register dynamic hooks
- */
-function vw_api_register_dynamic_hooks() {
-    $config = get_option( 'vw_api_endpoint_config', array( 'workflows' => array() ) );
-	$workflows = isset( $config['workflows'] ) ? $config['workflows'] : array();
+	public static function handle_request( $request ) {
+		$steps = CustomStatus::get_custom_statuses();
+		$context = [
+			'request' => $request->get_params(),
+			'headers' => $request->get_headers(),
+			'steps'   => [],
+			'dto'     => [],
+		];
 
-	foreach ( $workflows as $workflow ) {
-		$entries = isset( $workflow['entries'] ) ? $workflow['entries'] : array();
-		foreach ( $entries as $entry ) {
-            if ( $entry['type'] !== 'hook' || empty($entry['action']) ) continue;
-            add_action( $entry['action'], function( $data = array() ) use ( $workflow ) {
-                $request = new WP_REST_Request();
-                $request->set_body_params( (array) $data );
-                vw_api_handle_workflow_request( $workflow, $request );
-            }, 10, 1 );
-        }
+		$results = [];
+		foreach ( $steps as $step ) {
+			$step_result = self::execute_step( $step, $context );
+			$results[] = [
+				'step' => $step->name,
+				'result' => $step_result
+			];
+			$context['steps'][ $step->slug ] = $step_result;
+		}
+
+		return rest_ensure_response( [
+			'success' => true,
+			'data'    => $results,
+			'dto'     => $context['dto']
+		] );
 	}
 }
 
-/**
- * Request handler
- */
-function vw_api_handle_workflow_request( $workflow, $request ) {
-	$workflow_id = $workflow['id'];
-	$context = array(
-		'request' => array(
-			'body'    => $request instanceof WP_REST_Request ? $request->get_json_params() : $request->get_body_params(),
-			'params'  => $request instanceof WP_REST_Request ? $request->get_params() : array(),
-			'headers' => $request instanceof WP_REST_Request ? $request->get_headers() : array(),
-		),
-		'steps'   => array(),
-        'vars'    => array(),
-	);
+	private static function execute_step( $step, &$context ) {
+		$component_ids = $step->meta['required_metadata_ids'] ?? [];
+		$step_results = [];
 
-    $execution_start = microtime(true);
-	$steps = isset( $workflow['steps'] ) ? $workflow['steps'] : array();
-	usort( $steps, function( $a, $b ) { return (isset($a['order']) ? (int)$a['order'] : 0) - (isset($b['order']) ? (int)$b['order'] : 0); } );
-
-	foreach ( $steps as $step ) {
-		if ( ! empty( $step['async'] ) && function_exists( 'as_enqueue_async_action' ) ) {
-            as_enqueue_async_action( 'vw_api_process_async_step', array( 'step' => $step, 'context' => $context ), 'vw-api-workflow' );
-            $context['steps'][ $step['id'] ] = array( 'status' => 'queued' );
-            continue;
+		foreach ( $component_ids as $component_id ) {
+			$component = EditorialMetadata::get_editorial_metadata_term_by( 'id', $component_id );
+			if ( $component ) {
+				$res = self::execute_component( $component, $context );
+				$step_results[ $component->slug ] = $res;
+			}
 		}
 
 		$result = vw_api_execute_step( $step, $context );
@@ -114,133 +107,112 @@ function vw_api_handle_workflow_request( $workflow, $request ) {
 	return rest_ensure_response( array( 'success' => true, 'workflow_id' => $workflow_id, 'steps' => $context['steps'] ) );
 }
 
-function vw_api_log_execution( $workflow, $context, $duration ) {
-    $log_id = wp_insert_post( array(
-        'post_type' => 'vw_workflow_log',
-        'post_title' => sprintf( 'Run: %s (%s)', $workflow['id'], date('H:i:s') ),
-        'post_status' => 'publish',
-    ) );
-    if ( ! is_wp_error( $log_id ) ) {
-        update_post_meta( $log_id, 'workflow_id', $workflow['id'] );
-        update_post_meta( $log_id, 'context', $context );
-        update_post_meta( $log_id, 'duration', $duration );
-    }
-}
+		switch ( $type ) {
+			case 'php_callback':
+				return self::run_php_callback( $config, $context );
+			case 'dto_schema':
+				return self::validate_dto_schema( $config, $context );
+			case 'data_extractor':
+				return self::extract_data( $config, $context );
+			case 'data_transformer':
+				return self::transform_data( $config, $context );
+			case 'data_ingestor':
+				return self::ingest_dto_to_cpt( $config, $context );
+			case 'despatch_config':
+				return self::send_webhook( $config, $context );
+		}
+		return null;
+	}
 
-/**
- * Execute step logic
- */
-function vw_api_execute_step( $step, &$context ) {
-	$type = $step['type'];
-	$config = isset( $step['config'] ) ? $step['config'] : array();
-	$result = null;
+	private static function run_php_callback( $config, $context ) {
+		if ( ! empty( $config['function_name'] ) && is_callable( $config['function_name'] ) ) {
+			return call_user_func( $config['function_name'], $context );
+		}
+		return [ 'error' => 'Function not callable' ];
+	}
 
-	switch ( $type ) {
-		case 'webhook':
-			$url = vw_api_parse_template( isset($config['url']) ? $config['url'] : '', $context );
-			$response = wp_remote_request( $url, array(
-				'method'  => isset( $config['method'] ) ? $config['method'] : 'POST',
-				'headers' => array( 'Content-Type' => 'application/json' ),
-				'body'    => json_encode( vw_api_parse_template_array( isset($config['payload']) ? $config['payload'] : array(), $context ) ),
-			) );
+	private static function validate_dto_schema( $config, &$context ) {
+		$schema = json_decode( $config['schema'] ?? '{}', true );
+		$context['dto_schema'] = $schema;
+		return [ 'schema_loaded' => true ];
+	}
 
-            if ( is_wp_error( $response ) && !empty($config['retry']) ) {
-                if ( function_exists( 'as_enqueue_async_action' ) ) {
-                    as_enqueue_async_action( 'vw_api_process_async_step', array( 'step' => $step, 'context' => $context ), 'vw-api-workflow' );
-                    return array('status' => 'retry_queued', 'error' => $response->get_error_message());
-                }
-            }
+	private static function extract_data( $config, $context ) {
+		$source = $config['source_type'] ?? 'post';
+		$extractor_config = json_decode( $config['extractor_config'] ?? '{}', true );
 
-			$result = is_wp_error( $response ) ? $response : json_decode( wp_remote_retrieve_body( $response ), true );
-			break;
+		if ( $source === 'post' ) {
+			$post_id = self::parse_template( $extractor_config['post_id'] ?? '{{request.post_id}}', $context );
+			$post = get_post( absint($post_id) );
+			if ( ! $post ) return [ 'error' => 'Post not found' ];
 
-		case 'php_action':
-			try {
-				$execute = function( $__code, $request, $context ) { return eval( '?>' . $__code ); };
-				$result = $execute( isset($config['php_code']) ? $config['php_code'] : '', $context['request'], $context );
-			} catch ( Throwable $e ) { $result = new WP_Error( 'php_error', $e->getMessage() ); }
-			break;
+			$extracted = [
+				'post_title'   => $post->post_title,
+				'post_content' => $post->post_content,
+				'meta'         => []
+			];
+			foreach ( ($extractor_config['meta_keys'] ?? []) as $key ) {
+				$extracted['meta'][$key] = get_post_meta( $post->ID, $key, true );
+			}
+			return $extracted;
+		}
+		return [ 'error' => 'Unsupported source' ];
+	}
 
-        case 'dto_mapping':
-            $dto = array();
-            foreach ( (isset($config['mapping']) ? $config['mapping'] : array()) as $key => $template ) {
-                $dto[$key] = vw_api_parse_template( $template, $context );
-            }
-            $result = $dto;
-            $context['vars'][$step['id']] = $dto;
-            break;
+	private static function transform_data( $config, &$context ) {
+		$mapping = json_decode( $config['mapping'] ?? '{}', true );
+		$transformed = self::parse_template( $mapping, $context );
+		$context['dto'] = array_merge( $context['dto'], $transformed );
+		return $transformed;
+	}
 
-        case 'transform':
-            $input = vw_api_parse_template( isset($config['input']) ? $config['input'] : '', $context );
-            $op = isset($config['operation']) ? $config['operation'] : 'none';
-            $result = $input;
-            if ( $op === 'lowercase' ) $result = strtolower($input);
-            if ( $op === 'uppercase' ) $result = strtoupper($input);
-            if ( $op === 'json_decode' ) $result = json_decode($input, true);
-            if ( $op === 'date_format' ) $result = date(isset($config['format']) ? $config['format'] : 'Y-m-d', strtotime($input));
-            break;
+	private static function ingest_dto_to_cpt( $config, $context ) {
+		$post_type = $config['post_type'] ?? 'post';
+		$mapping = json_decode( $config['mapping'] ?? '{}', true );
 
-        case 'logic':
-            $expr = vw_api_parse_template(isset($config['condition']) ? $config['condition'] : '', $context);
-            if ( empty($expr) || in_array($expr, array('false', '0', 'null')) ) {
-                if ( isset($config['on_false']) && $config['on_false'] === 'stop' ) return array('__skip_workflow' => true);
-                $result = array('condition_met' => false);
-            } else { $result = array('condition_met' => true); }
-            break;
+		$post_data = self::parse_template( $mapping, $context );
+		$post_id = wp_insert_post( array_merge( [ 'post_type' => $post_type, 'post_status' => 'publish' ], $post_data ) );
 
-		case 'ingest':
-			$post_id = wp_insert_post( array(
-				'post_type'   => isset($config['post_type']) ? $config['post_type'] : 'post',
-				'post_title'  => vw_api_parse_template( isset($config['title']) ? $config['title'] : 'Untitled', $context ),
-				'post_status' => 'publish',
-			) );
-			if ( ! is_wp_error( $post_id ) ) {
-				foreach ( (isset($config['meta']) ? $config['meta'] : array()) as $key => $template ) {
-					update_post_meta( $post_id, $key, vw_api_parse_template( $template, $context ) );
-				}
-				$result = array( 'post_id' => $post_id );
-			} else { $result = $post_id; }
-			break;
+		return [ 'post_id' => $post_id ];
+	}
+
+	private static function send_webhook( $config, $context ) {
+		$url = self::parse_template( $config['url'] ?? '', $context );
+		$headers = self::parse_template( $config['headers'] ?? [], $context );
+		$body = $context['dto'];
+
+		$response = wp_remote_request( $url, [
+			'method'  => $config['method'] ?? 'POST',
+			'body'    => wp_json_encode( $body ),
+			'headers' => array_merge( [ 'Content-Type' => 'application/json' ], (array)$headers ),
+		] );
+
+		return is_wp_error( $response ) ? [ 'error' => $response->get_error_message() ] : [
+			'status' => wp_remote_retrieve_response_code( $response ),
+			'body'   => wp_remote_retrieve_body( $response ),
+		];
 	}
 	return $result;
 }
 
-add_action( 'vw_api_process_async_step', 'vw_api_run_async_step', 10, 2 );
-function vw_api_run_async_step( $step, $context ) { vw_api_execute_step( $step, $context ); }
-
-function vw_api_parse_template( $string, $context ) {
-    if ( ! is_string( $string ) ) return $string;
-	return preg_replace_callback( '/\{\{(.*?)\}\}/', function( $matches ) use ( $context ) {
-		$path = explode( '.', trim( $matches[1] ) );
-		$value = $context;
-		foreach ( $path as $segment ) {
-			if ( (is_array( $value ) || $value instanceof ArrayAccess) && isset( $value[ $segment ] ) ) {
-				$value = $value[ $segment ];
-			} else { return $matches[0]; }
+	public static function parse_template( $data, $context ) {
+		if ( is_array( $data ) ) {
+			foreach ( $data as $key => $value ) {
+				$data[ $key ] = self::parse_template( $value, $context );
+			}
+			return $data;
 		}
-		return is_scalar( $value ) ? $value : json_encode( $value );
-	}, $string );
-}
+		if ( is_string( $data ) && ( strpos( $data, '{' ) === 0 || strpos( $data, '[' ) === 0 ) ) {
+			$decoded = json_decode( $data, true );
+			if ( json_last_error() === JSON_ERROR_NONE ) {
+				return self::parse_template( $decoded, $context );
+			}
+		}
+		if ( ! is_string( $data ) ) return $data;
 
 function vw_api_parse_template_array( $array, $context ) {
 	if ( ! is_array( $array ) ) return vw_api_parse_template( $array, $context );
 	foreach ( $array as $key => $value ) { $array[ $key ] = vw_api_parse_template_array( $value, $context ); }
 	return $array;
 }
-
-// Admin UI Integration
-add_action( 'admin_menu', function() {
-    add_menu_page( 'API Workflows', 'API Workflows', 'manage_options', 'vw-api-workflows', function() { echo '<div id="vw-api-workflow-admin"></div>'; }, 'dashicons-rest-api', 30 );
-} );
-
-add_action( 'admin_enqueue_scripts', function( $hook ) {
-    if ( 'toplevel_page_vw-api-workflows' !== $hook ) return;
-    $asset_file = __DIR__ . '/build/index.asset.php';
-    if ( file_exists( $asset_file ) ) {
-        $assets = require $asset_file;
-        wp_enqueue_script( 'vw-api-workflow-admin', plugins_url( 'build/index.js', __FILE__ ), $assets['dependencies'], $assets['version'], true );
-        if ( file_exists( __DIR__ . '/build/index.css' ) ) {
-            wp_enqueue_style( 'vw-api-workflow-admin', plugins_url( 'build/index.css', __FILE__ ), array(), $assets['version'] );
-        }
-    }
-} );
+APIWorkflow::init();

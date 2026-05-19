@@ -22,6 +22,12 @@ class EditorialMetadata {
 		'php_callback',
 		'data_mapping',
 		'despatch_config',
+<<<<<<< HEAD
+		'dto_schema',
+		'data_extractor',
+		'data_transformer',
+=======
+>>>>>>> trunk
 		'checkbox',
 		'text',
 		'date',
